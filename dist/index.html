@@ -37,4 +37,75 @@ else body=`<div class="card"><h3 class="sectiontitle">История трени�
 document.querySelector('#app').innerHTML=`<section class="device"><div class="statusbar"><span>9:41</span><span class="status-icons">◆ ◉ ▮ 100%</span></div><header class="top"><div class="brand">✦ Rep<i>Track</i></div><div class="topright"><span class="pill">● Только на этом устройстве</span><button class="iconbtn" onclick="exportData()" title="Экспорт данных">⇧</button><button class="iconbtn" onclick="importData()" title="Импорт данных">⚙</button></div></header><div class="layout"><nav class="nav"><small>Тренировки</small>${[['Главная','⌂'],['Зал','♧'],['План','▦'],['Прогресс','↗'],['История','◷']].map(([n,i])=>`<button class="${tab===n?'active':''}" onclick="go('${n}')"><span>${i}</span> ${n}</button>`).join('')}<small>Данные сохраняются автоматически</small></nav><main class="content"><h1 class="heading">${tab==='Главная'?'Твой прогресс. Твой план.':tab}</h1><p class="sub">${tab==='Главная'?'Сильнее с каждой тренировкой':'Локально сохранено на этом устройстве'}</p>${body}<p class="foot">RepTrack · Purple Pro · Данные хранятся в этом браузере</p></main></div><div class="android-home"></div></section>`}
 function volume(s){return s.items.reduce((n,x)=>n+x.sets.filter(y=>y.done).reduce((m,y)=>m+(+y.weight||0)*(+y.reps||0),0),0)}function go(t){state.tab=t;render()}function edit(i,j,k,v){state.active.items[i].sets[j][k]=v;save()}function toggle(i,j){const s=state.active.items[i].sets[j];s.done=!s.done;save();render()}function addSet(i){state.active.items[i].sets.push({weight:'',reps:'',done:false});save();render()}function moveDay(i){state.cycle.push(...state.cycle.splice(i,1));save();render()}function exportData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}));a.download='reptrack-export.json';a.click();URL.revokeObjectURL(a.href)}function importData(){const f=document.createElement('input');f.type='file';f.accept='.json,application/json';f.onchange=async()=>{try{const d=JSON.parse(await f.files[0].text());if(!Array.isArray(d.cycle)||!d.templates||!Array.isArray(d.sessions))throw Error();state=d;save();render()}catch{alert('Не удалось прочитать файл RepTrack')}};f.click()}
 render();setInterval(()=>{if(state.active&&state.tab==='Зал')render()},60000);
+</script><script>
+(() => {
+  const now = new Date();
+  const forceDemo = new URLSearchParams(location.search).get('demo') === '1';
+  const hasDemo = state.sessions.some(session => session.demo);
+  if (!state.active && !hasDemo && (!state.sessions.length || forceDemo)) {
+    const demo = Array.from({ length: 12 }, (_, index) => {
+      const age = 29 - Math.round(index * 29 / 11);
+      const date = new Date(now);
+      date.setDate(date.getDate() - age);
+      if (age) date.setHours(18, 0, 0, 0);
+      const name = initial.cycle[index % initial.cycle.length];
+      const items = state.templates[name].slice(0, 5).map((exercise, exerciseIndex) => ({
+        name: exercise,
+        sets: Array.from({ length: 3 }, (_, setIndex) => ({
+          weight: String(15 + exerciseIndex * 10 + Math.floor(index / 4) * 2.5 + setIndex * 2.5),
+          reps: String(12 - setIndex * 2),
+          done: true
+        }))
+      }));
+      return { name, started: date.getTime() - 3600000, ended: date.getTime(), date: date.toISOString(), demo: true, items };
+    });
+    state.sessions = [...demo, ...state.sessions].sort((a, b) => new Date(b.date) - new Date(a.date));
+    state.tab = 'Прогресс';
+    save();
+  }
+
+  document.head.insertAdjacentHTML('beforeend', `<style>
+    .monthchart{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;height:132px;align-items:end;margin:14px 0 4px}
+    .monthweek{display:grid;grid-template-rows:1fr auto;gap:7px;height:100%;min-width:0;text-align:center;color:var(--muted);font-size:10px}
+    .monthbartrack{height:100%;display:flex;align-items:end}
+    .monthbar{width:100%;min-height:5px;border-radius:9px 9px 3px 3px;background:linear-gradient(180deg,#c398ff,#8054dd)}
+    .monthvolume{color:var(--text);font-size:9px;line-height:1.2}
+  </style>`);
+
+  const renderScreen = render;
+  render = function () {
+    renderScreen();
+    if (state.tab !== 'Прогресс') return;
+    const today = new Date();
+    const rangeStart = new Date(today);
+    rangeStart.setDate(rangeStart.getDate() - 29);
+    rangeStart.setHours(0, 0, 0, 0);
+    const month = state.sessions.filter(session => {
+      const date = new Date(session.date).getTime();
+      return date >= rangeStart.getTime() && date <= today.getTime();
+    });
+    const weeks = Array.from({ length: 5 }, () => ({ sessions: 0, volume: 0 }));
+    month.forEach(session => {
+      const age = Math.floor((today.getTime() - new Date(session.date).getTime()) / 86400000);
+      const week = Math.min(4, Math.floor((29 - age) / 7));
+      weeks[week].sessions++;
+      weeks[week].volume += volume(session);
+    });
+    const maxVolume = Math.max(1, ...weeks.map(week => week.volume));
+    const totalSets = month.reduce((sum, session) => sum + session.items.reduce((count, item) => count + item.sets.filter(set => set.done).length, 0), 0);
+    const totalVolume = month.reduce((sum, session) => sum + volume(session), 0);
+    const dateText = `${rangeStart.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })} — ${today.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}`;
+    const demoCount = month.filter(session => session.demo).length;
+    const weeksHtml = weeks.map((week, index) => {
+      const start = new Date(rangeStart);
+      start.setDate(start.getDate() + index * 7);
+      return `<div class="monthweek"><div class="monthbartrack"><div class="monthbar" style="height:${Math.max(4, week.volume / maxVolume * 100)}%" title="${week.sessions} тренировок · ${week.volume.toLocaleString('ru-RU')} кг"></div></div><div><div class="monthvolume">${week.sessions ? `${week.sessions} тр.` : '—'}</div><div>${start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}</div></div></div>`;
+    }).join('');
+    const panel = document.createElement('section');
+    panel.className = 'card';
+    panel.innerHTML = `<div class="row"><h3 class="sectiontitle">Последние 30 дней</h3><span class="badge">${dateText}</span></div><div class="stats"><div class="stat">Тренировок<b>${month.length}</b></div><div class="stat">Подходов<b>${totalSets}</b></div><div class="stat">Тоннаж<b>${totalVolume.toLocaleString('ru-RU')} кг</b></div></div><div class="monthchart">${weeksHtml}</div><p class="muted" style="font-size:12px;margin:10px 0 0">${demoCount ? `Шаблонные данные для тестирования · ${demoCount} тренировок` : 'Показаны ваши тренировки за месяц'}</p>`;
+    document.querySelector('.content .sub').insertAdjacentElement('afterend', panel);
+  };
+  render();
+})();
 </script></body></html>
