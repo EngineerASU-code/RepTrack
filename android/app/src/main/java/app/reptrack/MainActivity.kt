@@ -1,11 +1,16 @@
 package app.reptrack
 
 import android.os.Bundle
+import android.content.ClipData
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -31,7 +36,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.net.Uri
+import android.widget.Toast
 import java.io.ByteArrayOutputStream
+import java.io.File
+import androidx.core.content.FileProvider
 
 private data class AppPalette(val background: Color, val surface: Color, val accent: Color, val secondary: Color, val muted: Color, val text: Color, val light: Boolean = false) {
     fun colorScheme() = if (light) lightColorScheme(background = background, surface = surface, primary = accent, secondary = secondary, onBackground = text, onSurface = text)
@@ -57,23 +65,52 @@ private fun DiaryTheme.title() = when (this) {
     DiaryTheme.GRAPHITE_MINIMAL -> "Graphite Minimal"
 }
 private val tabs = listOf("Главная", "Зал", "План", "Прогресс", "История")
-private val tabMarks = listOf("⌂", "♧", "▦", "↗", "◷")
+private val tabMarks = listOf("⌂", "⚒", "▦", "↗", "◷")
 
 class MainActivity : ComponentActivity() {
+    private val incomingFile = mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { val vm: DiaryViewModel = viewModel(); RepTrackApp(vm) }
+        incomingFile.value = intent.exchangeUri()
+        setContent { val vm: DiaryViewModel = viewModel(); RepTrackApp(vm, incomingFile.value) { incomingFile.value = null } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        incomingFile.value = intent.exchangeUri()
     }
 }
 
+@Suppress("DEPRECATION")
+private fun Intent.exchangeUri(): Uri? = when (action) {
+    Intent.ACTION_VIEW -> data
+    Intent.ACTION_SEND -> getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+    else -> null
+}?.takeIf { it.scheme == "content" }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RepTrackApp(vm: DiaryViewModel) {
+private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsumed: () -> Unit) {
     val state by vm.snapshot.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var tab by remember { mutableStateOf("Главная") }
     var confirm by remember { mutableStateOf<String?>(null) }
     var historyTarget by remember { mutableStateOf<String?>(null) }
+    var retryDeliverySessionId by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableLongStateOf(0L) }
+    fun shareTelegramDelivery(bytes: ByteArray) {
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching { writeExchangeFile(context, bytes, "RepTrack-${System.currentTimeMillis()}.rptdelivery", maxTelegramDeliveryBytes) }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { shareExchangeUri(context, it, "application/vnd.reptrack.delivery") }
+                    .onFailure { Toast.makeText(context, it.message ?: "Не удалось подготовить отчёт", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+    LaunchedEffect(incomingUri) { if (incomingUri != null) tab = "Настройки" }
     LaunchedEffect(state.activeSession?.id) { while (state.activeSession != null) { delay(1000); tick++ } }
 
     val palette = paletteFor(state.settings.theme)
@@ -81,7 +118,13 @@ private fun RepTrackApp(vm: DiaryViewModel) {
     MaterialTheme(colorScheme = palette.colorScheme()) {
         Scaffold(
             containerColor = LocalPalette.current.background,
-            topBar = { TopAppBar(title = { Text("✦ RepTrack", fontWeight = FontWeight.Bold) }, actions = { IconButton(onClick = { tab = "Настройки" }) { Text("⚙", color = LocalPalette.current.secondary) } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text)) },
+            topBar = { TopAppBar(title = { Row {
+                Text("Rep", color = LocalPalette.current.accent, fontWeight = FontWeight.Bold)
+                Text("Track", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+            } }, actions = {
+                TextButton(onClick = { tab = "Люди" }) { Text(state.activeProfile?.name ?: "Профиль", color = LocalPalette.current.secondary) }
+                IconButton(onClick = { tab = "Настройки" }) { Text("⚙", color = LocalPalette.current.secondary) }
+            }, colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text)) },
             bottomBar = {
                 NavigationBar(containerColor = LocalPalette.current.surface) {
                     tabs.forEachIndexed { index, item ->
@@ -94,9 +137,17 @@ private fun RepTrackApp(vm: DiaryViewModel) {
             else when (tab) {
                 "Зал" -> GymScreen(state, vm, Modifier.padding(padding), tick) { confirm = it }
                 "План" -> PlanScreen(state, vm, Modifier.padding(padding))
-                "История" -> HistoryScreen(state.history, state.settings.weightUnit, historyTarget, { historyTarget = null }, Modifier.padding(padding))
+                "Люди" -> CoachScreen(
+                    state,
+                    vm,
+                    Modifier.padding(padding),
+                    showDemoProfile = context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0,
+                    openDemoProfile = { vm.createDemoProfile(); tab = "Главная" },
+                    openSettings = { tab = "Настройки" },
+                )
+                "История" -> HistoryScreen(state.history, state.settings.weightUnit, historyTarget, { historyTarget = null }, Modifier.padding(padding), state.activeProfile?.kind == ProfileKind.PERSONAL && state.trustedLinks.any { it.localProfileId == state.activeProfileId }) { retryDeliverySessionId = it }
                 "Прогресс" -> ProgressScreen(state, Modifier.padding(padding)) { id -> historyTarget = id; tab = "История" }
-                "Настройки" -> SettingsScreen(state, vm, Modifier.padding(padding))
+                "Настройки" -> SettingsScreen(state, vm, Modifier.padding(padding), incomingUri, onIncomingConsumed)
                 else -> HomeScreen(state, vm, Modifier.padding(padding)) { tab = it }
             }
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
@@ -105,12 +156,60 @@ private fun RepTrackApp(vm: DiaryViewModel) {
 
     confirm?.let { action ->
         val session = state.activeSession
+        val resultLinks = if (action == "finish" && session != null && session.ownerId == personalProfileId) state.trustedLinks.filter { it.localProfileId == session.ownerId } else emptyList()
+        var selectedResultLinkId by remember(action, session?.id) { mutableStateOf(resultLinks.firstOrNull()?.id) }
         AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text(if (action == "finish") "Завершить тренировку?" else "Отменить тренировку?") },
-            text = { Text(if (action == "finish") "Сессия попадёт в историю. Повторно завершить её нельзя." else "Сессия будет помечена отменённой и не попадёт в аналитику.") },
-            confirmButton = { TextButton(onClick = { session?.let { if (action == "finish") vm.finish(it.id) else vm.cancel(it.id) }; confirm = null }) { Text(if (action == "finish") "Завершить" else "Отменить сессию") } },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (action == "finish") "Сессия попадёт в историю. Повторно завершить её нельзя." else "Сессия будет помечена отменённой и не попадёт в аналитику.")
+                if (resultLinks.isNotEmpty()) {
+                    Text("Можно сразу передать тренеру PDF и отдельный зашифрованный файл для импорта.", color = LocalPalette.current.muted)
+                    if (resultLinks.size > 1) resultLinks.forEach { link ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = selectedResultLinkId == link.id, onClick = { selectedResultLinkId = link.id })
+                            Text("${link.fingerprint} · ${link.remoteDeviceId.take(8)}", color = LocalPalette.current.text)
+                        }
+                    }
+                    Text("PDF будет виден Telegram и боту; файл импорта остаётся зашифрованным.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            } },
+            confirmButton = { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(onClick = { session?.let { if (action == "finish") vm.finish(it.id) else vm.cancel(it.id) }; confirm = null }, modifier = Modifier.fillMaxWidth()) { Text(if (action == "finish") "Только завершить" else "Отменить сессию") }
+                if (resultLinks.isNotEmpty()) OutlinedButton(onClick = {
+                    val linkId = selectedResultLinkId
+                    if (linkId != null && session != null) vm.finishAndCreateTelegramDelivery(linkId, session.id) { file, error ->
+                        if (error != null) Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                        else file?.let(::shareTelegramDelivery)
+                    }
+                    confirm = null
+                }, enabled = selectedResultLinkId != null, modifier = Modifier.fillMaxWidth()) { Text("Завершить и отправить тренеру") }
+            } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Назад") } },
+        )
+    }
+    retryDeliverySessionId?.let { sessionId ->
+        val links = state.trustedLinks.filter { it.localProfileId == personalProfileId }
+        var selectedLinkId by remember(sessionId) { mutableStateOf(links.firstOrNull()?.id) }
+        AlertDialog(
+            onDismissRequest = { retryDeliverySessionId = null },
+            title = { Text("Повторно подготовить отчёт") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Будет создан новый пакет для завершённой тренировки. Повторный импорт распознает её по ID события.", color = LocalPalette.current.muted)
+                Text("Читаемый PDF будет доступен Telegram и боту.", color = MaterialTheme.colorScheme.error)
+                if (links.isEmpty()) Text("Нет активной доверенной связи с тренером.", color = LocalPalette.current.muted)
+                links.forEach { link -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = selectedLinkId == link.id, onClick = { selectedLinkId = link.id })
+                    Text("${link.fingerprint} · ${link.remoteDeviceId.take(8)}", color = LocalPalette.current.text)
+                } }
+            } },
+            confirmButton = { Button(enabled = selectedLinkId != null, onClick = {
+                selectedLinkId?.let { linkId -> vm.createTelegramDelivery(linkId, sessionId) { bytes, error ->
+                    if (error != null) Toast.makeText(context, error, Toast.LENGTH_LONG).show() else bytes?.let(::shareTelegramDelivery)
+                } }
+                retryDeliverySessionId = null
+            }) { Text("Подготовить и передать") } },
+            dismissButton = { TextButton(onClick = { retryDeliverySessionId = null }) { Text("Отмена") } },
         )
     }
     }
@@ -133,8 +232,10 @@ private fun ScreenTitle(title: String, subtitle: String) {
 private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, navigate: (String) -> Unit) {
     val active = state.activeSession
     val next = state.nextPlan
+    val cycle = state.plans.filter { it.inCycle }
+    val progressExercise = state.history.asSequence().flatMap { it.exercises.asSequence() }.firstOrNull { it.tracksLoad }?.name
     ScreenColumn(modifier) {
-        ScreenTitle("Твой прогресс. Твой план.", "Тренировки сохраняются на этом устройстве")
+        ScreenTitle("Главная", "Твой прогресс. Твой план.")
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(if (active != null) "ТРЕНИРОВКА В ПРОЦЕССЕ" else "СЛЕДУЮЩАЯ ТРЕНИРОВКА", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelLarge)
@@ -142,6 +243,22 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
                 Text(if (active != null) "${active.completedSets} из ${active.totalSets} рабочих подходов" else "Цикл: ${state.plans.filter { it.inCycle }.joinToString(" → ") { it.name }}", color = LocalPalette.current.muted)
                 Button(onClick = { vm.start(active?.planId ?: next?.id); navigate("Зал") }, modifier = Modifier.fillMaxWidth(), enabled = active != null || next != null) {
                     Text(if (active != null) "Продолжить тренировку" else "▶  Начать тренировку")
+                }
+                if (cycle.isNotEmpty()) {
+                    Text("Цикл тренировок", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        cycle.forEach { plan ->
+                            val selected = plan.id == next?.id
+                            Surface(shape = CircleShape, color = if (selected) LocalPalette.current.accent else LocalPalette.current.background) {
+                                Text(
+                                    plan.name + if (selected) " ✓" else "",
+                                    Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    color = if (selected) LocalPalette.current.background else LocalPalette.current.text,
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -161,6 +278,10 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
             Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Прогресс", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text); TextButton(onClick = { navigate("Прогресс") }) { Text("Подробнее") } }
                 Text("${state.workouts} завершённых тренировок · лучший вес ${state.bestWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted)
+                if (progressExercise != null) {
+                    Text("$progressExercise · рабочий вес", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    TrendGraph(state.history, progressExercise, System.currentTimeMillis() - 30 * 86_400_000L, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 76.dp, showLabels = false)
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -168,14 +289,140 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
 }
 
 @Composable
+private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, showDemoProfile: Boolean, openDemoProfile: () -> Unit, openSettings: () -> Unit) {
+    var search by remember { mutableStateOf("") }
+    var sortByRecent by remember { mutableStateOf(false) }
+    var addProfile by remember { mutableStateOf(false) }
+    var renameProfile by remember { mutableStateOf<DiaryProfile?>(null) }
+    var assignToProfile by remember { mutableStateOf<DiaryProfile?>(null) }
+    var selectedPlanId by remember { mutableStateOf<String?>(null) }
+    val visibleProfiles = state.profiles.filter { it.name.contains(search.trim(), ignoreCase = true) }
+    val orderedProfiles = if (sortByRecent) visibleProfiles.sortedByDescending { it.lastImportedAt ?: it.lastCompletedAt ?: it.createdAt }
+        else visibleProfiles.sortedBy { it.name.lowercase(Locale.getDefault()) }
+
+    ScreenColumn(modifier) {
+        ScreenTitle("Подопечные", "Локальные дневники на этом устройстве")
+        if (showDemoProfile) OutlinedButton(onClick = openDemoProfile, modifier = Modifier.fillMaxWidth()) {
+            Text("Создать / открыть тестовый профиль")
+        }
+        OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("Поиск профиля") }, singleLine = true)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = !sortByRecent, onClick = { sortByRecent = false }, label = { Text("По имени") })
+                FilterChip(selected = sortByRecent, onClick = { sortByRecent = true }, label = { Text("По активности") })
+            }
+            Button(onClick = { addProfile = true }) { Text("＋ Добавить") }
+        }
+        orderedProfiles.forEach { profile ->
+            Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(Modifier.size(44.dp).background(LocalPalette.current.accent, CircleShape), contentAlignment = Alignment.Center) {
+                            Text(profile.name.take(1).uppercase(Locale.getDefault()), color = LocalPalette.current.background, fontWeight = FontWeight.Bold)
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                            Text(if (profile.kind == ProfileKind.PERSONAL) "Личный дневник" else "Подопечный", color = LocalPalette.current.muted)
+                        }
+                    }
+                    Text("${profile.completedWorkouts} завершённых тренировок${profile.lastCompletedAt?.let { " · последняя ${date(it)}" } ?: ""}", color = LocalPalette.current.muted)
+                    Text(profile.lastImportedAt?.let { "Последний импорт отчёта · ${date(it)}" } ?: if (profile.kind == ProfileKind.PERSONAL) "Личный профиль" else "Импортированных отчётов пока нет", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    if (profile.kind == ProfileKind.TRAINEE) {
+                        val linked = state.trustedLinks.any { it.localProfileId == profile.id }
+                        Text(if (linked) "Устройство связано · файлы защищены" else "Доверенное устройство не подключено", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { vm.setActiveProfile(profile.id) { error -> if (error == null) openSettings() } }, modifier = Modifier.fillMaxWidth()) { Text("Связь и обмен файлами") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (state.activeProfileId == profile.id) Text("Выбран", color = LocalPalette.current.secondary, modifier = Modifier.padding(12.dp))
+                        else OutlinedButton(onClick = { vm.setActiveProfile(profile.id) }) { Text("Открыть дневник") }
+                        if (profile.kind == ProfileKind.TRAINEE) TextButton(onClick = { renameProfile = profile }) { Text("Переименовать") }
+                    }
+                    if (profile.kind == ProfileKind.TRAINEE) {
+                        val assignments = state.assignments.filter { it.profileId == profile.id }
+                        val unassignedPlans = state.trainerPlans.filterNot { source -> assignments.any { it.sourcePlanId == source.id } }
+                        Text("Назначенные программы", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
+                        if (assignments.isEmpty()) Text("Программ пока нет.", color = LocalPalette.current.muted)
+                        assignments.forEach { assignment ->
+                            Column(Modifier.fillMaxWidth().padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("${assignment.planName} · версия ${assignment.version}", color = LocalPalette.current.text)
+                                if (assignment.assignedPlanVersion > assignment.version) Text("Есть локальные изменения программы.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                if (assignment.sourceVersion > assignment.version && assignment.pendingPlan == null) {
+                                    Text("Доступна версия ${assignment.sourceVersion}.", color = LocalPalette.current.secondary)
+                                    if (state.activeProfileId == personalProfileId) TextButton(onClick = { vm.stageAssignmentUpdate(assignment.id) }) { Text("Подготовить обновление") }
+                                    else TextButton(onClick = { vm.setActiveProfile(personalProfileId) }) { Text("Открыть личный профиль для обновления") }
+                                }
+                                assignment.pendingPlan?.let { incoming ->
+                                    Text("Обновление до версии ${assignment.pendingVersion}", color = LocalPalette.current.secondary, fontWeight = FontWeight.SemiBold)
+                                    if (assignment.pendingVersion != null && assignment.sourceVersion > assignment.pendingVersion) {
+                                        Text("Конфликт версий: доступна более новая версия ${assignment.sourceVersion}.", color = MaterialTheme.colorScheme.error)
+                                        if (!assignment.pendingAccepted && state.activeProfileId == personalProfileId) TextButton(onClick = { vm.stageAssignmentUpdate(assignment.id) }) { Text("Подготовить последнюю версию") }
+                                        else if (!assignment.pendingAccepted) Text("Ожидается обновление от тренера.", color = LocalPalette.current.muted)
+                                        else Text("Принятая версия применится после тренировки; затем можно проверить новую.", color = LocalPalette.current.muted)
+                                    } else if (state.activeProfileId == profile.id) {
+                                        val current = state.plans.firstOrNull { it.id == assignment.assignedPlanId }
+                                        if (current != null) planDiffSummary(current, incoming).forEach { Text("• $it", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall) }
+                                        if (assignment.pendingAccepted) Text("Принято. Программа применится после завершения активной тренировки.", color = LocalPalette.current.secondary)
+                                        else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(onClick = { vm.acceptAssignmentUpdate(assignment.id) }) { Text("Принять") }
+                                            TextButton(onClick = { vm.rejectAssignmentUpdate(assignment.id) }) { Text("Отклонить") }
+                                        }
+                                    } else TextButton(onClick = { vm.setActiveProfile(profile.id) }) { Text("Открыть для проверки") }
+                                }
+                            }
+                        }
+                        if (unassignedPlans.isEmpty()) Text("Все личные программы уже назначены этому профилю.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { assignToProfile = profile; selectedPlanId = unassignedPlans.firstOrNull()?.id }, enabled = unassignedPlans.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Назначить программу") }
+                    }
+                }
+            }
+        }
+        if (orderedProfiles.isEmpty()) Text("Профили не найдены.", color = LocalPalette.current.muted)
+    }
+
+    if (addProfile) PlanNameDialog("Новый подопечный", "", onDismiss = { addProfile = false }, onSave = { vm.createTraineeProfile(it); addProfile = false })
+    renameProfile?.let { profile -> PlanNameDialog("Переименовать профиль", profile.name, onDismiss = { renameProfile = null }, onSave = { vm.renameProfile(profile.id, it); renameProfile = null }) }
+    assignToProfile?.let { profile ->
+        val assignedSourceIds = state.assignments.filter { it.profileId == profile.id }.mapTo(mutableSetOf()) { it.sourcePlanId }
+        val availablePlans = state.trainerPlans.filterNot { it.id in assignedSourceIds }
+        AlertDialog(
+            onDismissRequest = { assignToProfile = null },
+            title = { Text("Назначить программу · ${profile.name}") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                availablePlans.forEach { plan ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = selectedPlanId == plan.id, onClick = { selectedPlanId = plan.id })
+                        Text(plan.name, color = LocalPalette.current.text)
+                    }
+                }
+            } },
+            confirmButton = { TextButton(onClick = { selectedPlanId?.let { vm.assignPlanToProfile(it, profile.id) }; assignToProfile = null }, enabled = selectedPlanId != null) { Text("Назначить") } },
+            dismissButton = { TextButton(onClick = { assignToProfile = null }) { Text("Назад") } },
+        )
+    }
+}
+
+private fun planDiffSummary(current: TrainingPlan, incoming: TrainingPlan): List<String> = describePlanChanges(current, incoming)
+
+@Composable
 private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, tick: Long, confirm: (String) -> Unit) {
     val session = state.activeSession
     var replacementFor by remember { mutableStateOf<String?>(null) }
     var detailsFor by remember { mutableStateOf<String?>(null) }
+    var showCatalog by remember { mutableStateOf(false) }
+    var catalogQuery by remember { mutableStateOf("") }
     ScreenColumn(modifier) {
         ScreenTitle("Зал", "Отмечай фактические подходы")
         if (session == null) {
             Text("Выбери тренировку", style = MaterialTheme.typography.titleLarge, color = LocalPalette.current.text)
+            OutlinedButton(onClick = { showCatalog = !showCatalog }, modifier = Modifier.fillMaxWidth()) { Text(if (showCatalog) "Скрыть каталог упражнений" else "Каталог упражнений") }
+            if (showCatalog) {
+                val allNames = (state.plans.flatMap { it.exercises }.map { it.name } + state.history.flatMap { it.exercises }.map { it.name }).distinct().sorted()
+                val names = allNames.filter { it.contains(catalogQuery.trim(), ignoreCase = true) }
+                OutlinedTextField(catalogQuery, { catalogQuery = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Поиск упражнения") }, singleLine = true)
+                if (allNames.isEmpty()) Text("В выбранном профиле пока нет упражнений в планах или истории.", color = LocalPalette.current.muted)
+                else if (names.isEmpty()) Text("Упражнения не найдены.", color = LocalPalette.current.muted)
+                names.forEach { name -> OutlinedButton(onClick = { detailsFor = name }, modifier = Modifier.fillMaxWidth()) { Text("$name · история и рекорд") } }
+            }
             state.plans.forEach { plan ->
                 Card(onClick = { vm.start(plan.id) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                     Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -231,7 +478,7 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
     }
     detailsFor?.let { name ->
         val related = state.history.mapNotNull { session -> session.exercises.firstOrNull { it.name == name && !it.skipped }?.let { session to it } }
-        val record = related.flatMap { it.second.sets }.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.mapNotNull { it.weight.toDoubleOrNull() }.maxOrNull()
+        val record = related.flatMap { it.second.sets }.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.mapNotNull { parseFiniteWeight(it.weight)?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
         AlertDialog(
             onDismissRequest = { detailsFor = null },
             title = { Text(name) },
@@ -277,6 +524,7 @@ private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tick: Lo
 
 @Composable
 private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier) {
+    val cyclePositions = state.plans.filter { it.inCycle }.mapIndexed { index, plan -> plan.id to index + 1 }.toMap()
     var addToPlan by remember { mutableStateOf<TrainingPlan?>(null) }
     var exerciseName by remember { mutableStateOf("") }
     var createPlan by remember { mutableStateOf(false) }
@@ -300,7 +548,7 @@ private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
             Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text(plan.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text(if (plan.inCycle) "${plan.position + 1} · в цикле" else "вне цикла", color = LocalPalette.current.muted) }
+                        Column(Modifier.weight(1f)) { Text(plan.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text(if (plan.inCycle) "${cyclePositions[plan.id]} · в цикле" else "вне цикла", color = LocalPalette.current.muted) }
                         TextButton(onClick = { vm.movePlan(plan.id, -1) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) { Text("↑") }
                         TextButton(onClick = { vm.movePlan(plan.id, 1) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) { Text("↓") }
                     }
@@ -378,10 +626,17 @@ private fun ExercisePlanDialog(exercise: PlanExercise, unit: WeightUnit, onDismi
 }
 
 @Composable
-private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier) {
+private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, incomingUri: Uri?, onIncomingConsumed: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf("") }
+    var exchangePreview by remember { mutableStateOf<ExchangePreview?>(null) }
+    var exchangeFile by remember { mutableStateOf<ByteArray?>(null) }
+    var selectedResultsLink by remember { mutableStateOf<TrustedLinkSummary?>(null) }
+    var selectedSessions by remember { mutableStateOf(setOf<String>()) }
+    var selectedProgramLink by remember { mutableStateOf<TrustedLinkSummary?>(null) }
+    var revokeTarget by remember { mutableStateOf<TrustedLinkSummary?>(null) }
+    var exchangeError by remember { mutableStateOf<String?>(null) }
     var showCreateBackup by remember { mutableStateOf(false) }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -390,6 +645,45 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
     var restorePassword by remember { mutableStateOf("") }
     var askRestorePassword by remember { mutableStateOf(false) }
     var confirmRestore by remember { mutableStateOf(false) }
+
+    fun shareOutput(bytes: ByteArray, filename: String, mime: String) {
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching { writeExchangeFile(context, bytes, filename) }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { uri -> runCatching { shareExchangeUri(context, uri, mime) }
+                    .onSuccess { status = "Файл передан в меню отправки. Это не подтверждает доставку или импорт." }
+                    .onFailure { exchangeError = it.message ?: "Не удалось открыть меню отправки" } }
+                    .onFailure { exchangeError = it.message ?: "Не удалось подготовить файл" }
+            }
+        }
+    }
+
+    fun handleExchangeFile(bytes: ByteArray) {
+        val pairing = runCatching { ExchangeCrypto.decodePairing(bytes) }.getOrNull()
+        when {
+            pairing?.kind == "request" -> vm.respondToPairingInvite(bytes, personalProfileId) { response ->
+                shareOutput(response.file, "RepTrack-${System.currentTimeMillis()}.rptinvite", "application/vnd.reptrack.invite")
+                status = "Ответ создан. Сверьте отпечаток ${response.fingerprint} по независимому каналу перед подтверждением связи."
+            }
+            pairing?.kind == "response" -> vm.processPairingResponse(bytes) { pending ->
+                status = "Отпечаток связи: ${pending.fingerprint}. Сверь его с собеседником по независимому каналу, затем подтверди связь ниже."
+            }
+            else -> {
+                exchangeFile = bytes
+                vm.previewExchange(bytes) { exchangePreview = it }
+            }
+        }
+    }
+
+    LaunchedEffect(incomingUri) {
+        if (incomingUri != null) {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(incomingUri)?.use { it.readLimited(maxExchangeBytes) } ?: error("Не удалось открыть файл") }
+            }
+            result.onSuccess(::handleExchangeFile).onFailure { exchangeError = it.message ?: "Не удалось прочитать файл" }
+            onIncomingConsumed()
+        }
+    }
 
     val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/vnd.reptrack.backup")) { uri ->
         val password = pendingPassword
@@ -421,6 +715,12 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
             withContext(Dispatchers.Main) { result.onSuccess { vm.importPlans(it) { error -> status = error ?: "Планы импортированы как новые шаблоны." } }.onFailure { status = it.message ?: "Не удалось прочитать планы" } }
         }
     }
+    val openExchange = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch(Dispatchers.IO) {
+            val result = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readLimited(maxExchangeBytes) } ?: error("Не удалось открыть файл") }
+            withContext(Dispatchers.Main) { result.onSuccess(::handleExchangeFile).onFailure { exchangeError = it.message ?: "Не удалось прочитать файл" } }
+        }
+    }
 
     ScreenColumn(modifier) {
         ScreenTitle("Настройки", "Локальные параметры приложения")
@@ -450,11 +750,48 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
         }
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Защищённый обмен", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                Text("Устройства связываются через файл приглашения. Перед подтверждением сравните отпечаток по независимому каналу.", color = LocalPalette.current.muted)
+                Text("Для пересылки через бота откройте его личный чат на обоих устройствах и отправьте туда файл регистрации каждой доверенной связи.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                if (state.activeProfile?.kind == ProfileKind.TRAINEE) {
+                    Button(onClick = { vm.createPairingInvitation(state.activeProfileId) { bytes -> shareOutput(bytes, "RepTrack-${System.currentTimeMillis()}.rptinvite", "application/vnd.reptrack.invite") } }, modifier = Modifier.fillMaxWidth()) { Text("Создать приглашение для подопечного") }
+                }
+                OutlinedButton(onClick = { openExchange.launch(arrayOf("application/vnd.reptrack.invite", "application/vnd.reptrack.result", "application/vnd.reptrack.program", "application/octet-stream", "*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Открыть файл обмена") }
+
+                val links = state.trustedLinks.filter { it.localProfileId == state.activeProfileId }
+                if (links.isEmpty()) Text("Для выбранного профиля доверенных связей пока нет.", color = LocalPalette.current.muted)
+                links.forEach { link ->
+                    HorizontalDivider()
+                    Text("Связь · ${link.fingerprint}", color = LocalPalette.current.secondary, fontWeight = FontWeight.SemiBold)
+                    Text("Устройство ${link.remoteDeviceId.take(8)} · ID маршрута ${link.id.take(8)} · создана ${date(link.createdAt)}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(onClick = { vm.createTelegramRouteFile(link.id) { bytes -> shareOutput(bytes, "RepTrack-${link.id.take(8)}.rptrelay", "application/vnd.reptrack.telegram-route") } }, modifier = Modifier.fillMaxWidth()) { Text("Подключить эту связь к Telegram-боту") }
+                    if (state.activeProfile?.kind == ProfileKind.PERSONAL) {
+                        OutlinedButton(onClick = { selectedResultsLink = link; selectedSessions = emptySet() }, enabled = state.history.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Выбрать тренировки и отправить отчёт") }
+                    }
+                    if (state.activeProfile?.kind == ProfileKind.TRAINEE) {
+                        OutlinedButton(onClick = { selectedProgramLink = link }, enabled = state.allPlans.any { it.ownerId == link.localProfileId }, modifier = Modifier.fillMaxWidth()) { Text("Отправить программу подопечному") }
+                    }
+                    TextButton(onClick = { revokeTarget = link }) { Text("Отозвать связь") }
+                }
+
+                state.pendingPairings.filter { it.localProfileId == state.activeProfileId }.forEach { pending ->
+                    HorizontalDivider()
+                    Text(if (pending.fingerprint == null) "Приглашение отправлено · ждём ответ" else "Сверь отпечаток и подтверди связь", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+                    pending.fingerprint?.let { Text(it, color = LocalPalette.current.secondary, style = MaterialTheme.typography.titleMedium) }
+                    Text("Код ${pending.inviteId.take(8)} · действует до ${date(pending.expiresAt)}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    if (pending.fingerprint != null) Button(onClick = { vm.confirmPairing(pending.inviteId) { error -> status = error ?: "Связь подтверждена." } }, modifier = Modifier.fillMaxWidth()) { Text("Отпечаток проверен · связать") }
+                }
+                if (status.isNotBlank()) Text(status, color = LocalPalette.current.secondary)
+                exchangeError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Файлы и резервные копии", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
                 Text("Дневник хранится на этом устройстве и работает без сети. Резервная копия зашифрована паролем.", color = LocalPalette.current.muted)
                 Button(onClick = { showCreateBackup = true }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить зашифрованную копию") }
                 OutlinedButton(onClick = { openBackup.launch(arrayOf("application/vnd.reptrack.backup", "application/octet-stream", "*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Восстановить резервную копию") }
-                OutlinedButton(onClick = { savePlans.launch("RepTrack-планы.json") }, enabled = state.plans.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Экспортировать все планы") }
+                OutlinedButton(onClick = { savePlans.launch("RepTrack-планы.rptplan") }, enabled = state.plans.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text("Экспортировать все планы") }
                 OutlinedButton(onClick = { openPlans.launch(arrayOf("application/json", "text/plain", "*/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Импортировать планы") }
                 if (status.isNotBlank()) Text(status, color = LocalPalette.current.secondary)
             }
@@ -470,9 +807,83 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
             OutlinedTextField(newPassword, { newPassword = it }, label = { Text("Пароль, минимум 8 символов") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
             OutlinedTextField(confirmPassword, { confirmPassword = it }, label = { Text("Повторить пароль") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
         } },
-        confirmButton = { TextButton(onClick = { pendingPassword = newPassword; showCreateBackup = false; saveBackup.launch("RepTrack-${System.currentTimeMillis()}.rpbk"); newPassword = ""; confirmPassword = "" }, enabled = newPassword.length >= 8 && newPassword == confirmPassword) { Text("Продолжить") } },
+        confirmButton = { TextButton(onClick = { pendingPassword = newPassword; showCreateBackup = false; saveBackup.launch("RepTrack-${System.currentTimeMillis()}.rptbackup"); newPassword = ""; confirmPassword = "" }, enabled = newPassword.length >= 8 && newPassword == confirmPassword) { Text("Продолжить") } },
         dismissButton = { TextButton(onClick = { showCreateBackup = false; newPassword = ""; confirmPassword = "" }) { Text("Назад") } },
     )
+
+    selectedResultsLink?.let { link -> AlertDialog(
+        onDismissRequest = { selectedResultsLink = null; selectedSessions = emptySet() },
+        title = { Text("Выбери тренировки") },
+        text = { Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("В отчёт попадут только отмеченные завершённые тренировки.", color = LocalPalette.current.muted)
+            state.history.forEach { session ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = session.id in selectedSessions, onCheckedChange = { checked -> selectedSessions = if (checked) selectedSessions + session.id else selectedSessions - session.id })
+                    Column {
+                        Text(session.planName, color = LocalPalette.current.text)
+                        Text("${date(session.endedAt ?: session.startedAt)} · ${session.completedSets} рабочих подходов", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        } },
+        confirmButton = { TextButton(onClick = {
+            vm.createResultPackage(link.id, selectedSessions) { bytes -> shareOutput(bytes, "RepTrack-${System.currentTimeMillis()}.rptresult", "application/vnd.reptrack.result") }
+            selectedResultsLink = null; selectedSessions = emptySet()
+        }, enabled = selectedSessions.isNotEmpty()) { Text("Создать отчёт") } },
+        dismissButton = { TextButton(onClick = { selectedResultsLink = null; selectedSessions = emptySet() }) { Text("Назад") } },
+    ) }
+
+    selectedProgramLink?.let { link -> AlertDialog(
+        onDismissRequest = { selectedProgramLink = null },
+        title = { Text("Выбери программу") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Получатель увидит версию и изменения и сможет принять или отклонить обновление.", color = LocalPalette.current.muted)
+            state.allPlans.filter { it.ownerId == link.localProfileId }.forEach { plan -> OutlinedButton(onClick = {
+                vm.createProgramPackage(link.id, plan.id) { bytes -> shareOutput(bytes, "RepTrack-${System.currentTimeMillis()}.rptprogram", "application/vnd.reptrack.program") }
+                selectedProgramLink = null
+            }, modifier = Modifier.fillMaxWidth()) { Text("${plan.name} · v${plan.version} · ${if (plan.id in state.assignments.map { it.assignedPlanId }) "индивидуальная копия" else "личный план тренера"}") } }
+        } },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = { selectedProgramLink = null }) { Text("Назад") } },
+    ) }
+
+    exchangePreview?.let { preview ->
+        val bytes = exchangeFile
+        AlertDialog(
+            onDismissRequest = { exchangePreview = null; exchangeFile = null },
+            title = { Text(if (preview.type == "result") "Импорт отчёта" else "Обновление программы") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(preview.title, color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                Text(preview.summary, color = LocalPalette.current.muted)
+                preview.changes.forEach { Text("• $it", color = LocalPalette.current.text) }
+                preview.currentPlanName?.let { Text("Текущая локальная программа: $it", color = LocalPalette.current.muted) }
+                if (preview.hasLocalEdits) Text("Эта программа менялась локально после предыдущего принятия. Принятие заменит её актуальное содержимое.", color = MaterialTheme.colorScheme.error)
+                if (preview.alreadyImported) Text("Этот пакет уже обработан.", color = MaterialTheme.colorScheme.error)
+                if (preview.type == "result") Text("Дубликаты ранее импортированных тренировок будут пропущены.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+            } },
+            confirmButton = { TextButton(onClick = {
+                if (bytes != null) vm.acceptExchange(bytes) { result, error ->
+                    status = error ?: if (preview.type == "result") "Импортировано ${result?.importedSessions ?: 0} новых тренировок." else if (result?.deferred == true) "Обновление принято и будет применено после завершения тренировки." else "Программа принята и добавлена в планы."
+                }
+                exchangePreview = null; exchangeFile = null
+            }, enabled = bytes != null && !preview.alreadyImported) { Text(if (preview.type == "result") "Импортировать" else "Принять") } },
+            dismissButton = { Row {
+                if (preview.type == "program" && !preview.alreadyImported && bytes != null) TextButton(onClick = {
+                    vm.rejectExchange(bytes) { error -> status = error ?: "Обновление программы отклонено." }
+                    exchangePreview = null; exchangeFile = null
+                }) { Text("Отклонить") }
+                TextButton(onClick = { exchangePreview = null; exchangeFile = null }) { Text("Закрыть") }
+            } },
+        )
+    }
+
+    revokeTarget?.let { link -> AlertDialog(
+        onDismissRequest = { revokeTarget = null },
+        title = { Text("Отозвать связь?") },
+        text = { Text("Связь будет отозвана на этом устройстве. Если для неё включён Telegram-маршрут, отдельно отправь боту /disconnect ${link.id.take(8)}. Уже переданные данные останутся у получателя.") },
+        confirmButton = { TextButton(onClick = { vm.revokeLink(link.id) { error -> status = error ?: "Связь отозвана на этом устройстве." }; revokeTarget = null }) { Text("Отозвать") } },
+        dismissButton = { TextButton(onClick = { revokeTarget = null }) { Text("Назад") } },
+    ) }
 
     if (askRestorePassword) AlertDialog(
         onDismissRequest = { askRestorePassword = false; restorePassword = ""; encryptedBackup = null },
@@ -488,7 +899,7 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
     if (confirmRestore) AlertDialog(
         onDismissRequest = { confirmRestore = false; restorePassword = ""; encryptedBackup = null },
         title = { Text("Заменить текущие данные?") },
-        text = { Text("Планы, тренировки и настройки на этом устройстве будут заменены данными из копии.") },
+        text = { Text("Планы, тренировки и настройки на этом устройстве будут заменены данными из копии. Связи с устройствами сбросятся — их нужно будет подтвердить повторно.") },
         confirmButton = { TextButton(onClick = {
             val bytes = encryptedBackup
             if (bytes != null) vm.restoreEncryptedBackup(bytes, restorePassword) { error -> status = error ?: "Резервная копия восстановлена." }
@@ -512,32 +923,57 @@ private fun java.io.InputStream.readLimited(limit: Int): ByteArray {
     return output.toByteArray()
 }
 
+private fun writeExchangeFile(context: android.content.Context, bytes: ByteArray, filename: String, maxBytes: Int = maxExchangeBytes): Uri {
+    require(bytes.size <= maxBytes) { "Файл слишком большой" }
+    val folder = File(context.cacheDir, "exchange").apply { mkdirs() }
+    val safeName = filename.replace(Regex("[^A-Za-z0-9._-]"), "_").take(100)
+    val file = File(folder, safeName)
+    file.outputStream().use { it.write(bytes) }
+    return FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+}
+
+private fun shareExchangeUri(context: android.content.Context, uri: Uri, mime: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = mime
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newUri(context.contentResolver, "RepTrack exchange", uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(send, "Передать файл RepTrack"))
+}
+
 @Composable
-private fun HistoryScreen(history: List<TrainingSession>, unit: WeightUnit, targetId: String?, clearTarget: () -> Unit, modifier: Modifier) {
+private fun HistoryScreen(history: List<TrainingSession>, unit: WeightUnit, targetId: String?, clearTarget: () -> Unit, modifier: Modifier, canSend: Boolean, resend: (String) -> Unit) {
     ScreenColumn(modifier) {
         ScreenTitle("История", "Завершённые тренировки")
         if (history.isEmpty()) Text("История появится после завершения тренировки.", color = LocalPalette.current.muted)
         targetId?.let { id ->
             history.firstOrNull { it.id == id }?.let { session ->
                 Text("Тренировка из графика", color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold)
-                SessionHistoryCard(session, unit)
+                SessionHistoryCard(session, unit, canSend) { resend(session.id) }
                 TextButton(onClick = clearTarget, modifier = Modifier.heightIn(min = 48.dp)) { Text("Показать всю историю") }
             }
         }
-        history.filter { it.id != targetId }.forEach { session -> SessionHistoryCard(session, unit) }
+        history.filter { it.id != targetId }.forEach { session -> SessionHistoryCard(session, unit, canSend) { resend(session.id) } }
     }
 }
 
 @Composable
-private fun SessionHistoryCard(session: TrainingSession, unit: WeightUnit) {
+private fun SessionHistoryCard(session: TrainingSession, unit: WeightUnit, canSend: Boolean = false, resend: () -> Unit = {}) {
             Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(session.planName, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text("Макс. вес ${session.maxWeightKg?.let { formatWeight(it, unit) } ?: "—"}", color = LocalPalette.current.secondary) }
                     val duration = ((session.endedAt ?: session.startedAt) - session.startedAt).coerceAtLeast(0) / 60000L
                     Text("${date(session.startedAt)} · ${duration} мин · ${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов", color = LocalPalette.current.muted)
                     if (session.comment.isNotBlank()) Text(session.comment, color = LocalPalette.current.secondary)
+                    if (canSend) OutlinedButton(onClick = resend, modifier = Modifier.fillMaxWidth()) { Text("Повторно подготовить PDF и пакет") }
                     session.exercises.forEach { exercise ->
-                        val sets = exercise.sets.filter { it.done || it.skipped }.joinToString(" · ") { if (it.skipped) "пропуск" else "${displayWeight(it.weight, unit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}" }
+                        val sets = exercise.sets.filter { it.done || it.skipped }.joinToString(" · ") {
+                            when {
+                                it.skipped -> "пропуск"
+                                else -> "${if (it.kind == SetKind.WARMUP) "разминка " else ""}${displayWeight(it.weight, unit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}"
+                            }
+                        }
                         Text("${exercise.name}: ${sets.ifBlank { "нет выполненных подходов" }}", color = LocalPalette.current.text, style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -612,18 +1048,26 @@ private fun ProgressScreen(state: DiarySnapshot, modifier: Modifier, openSession
 }
 
 @Composable
-private fun TrendGraph(history: List<TrainingSession>, exerciseName: String, from: Long?, metric: ProgressMetric, unit: WeightUnit) {
+private fun TrendGraph(
+    history: List<TrainingSession>,
+    exerciseName: String,
+    from: Long?,
+    metric: ProgressMetric,
+    unit: WeightUnit,
+    height: androidx.compose.ui.unit.Dp = 150.dp,
+    showLabels: Boolean = true,
+) {
     val colors = LocalPalette.current
     val points = calculateProgressSeries(history, exerciseName, from, metric = metric)
     if (points.isEmpty()) { Text("Нет завершённых рабочих подходов для графика.", color = LocalPalette.current.muted); return }
-    Canvas(Modifier.fillMaxWidth().height(150.dp)) {
+    Canvas(Modifier.fillMaxWidth().height(height)) {
         val max = (points.maxOf { it.value } * 1.1).coerceAtLeast(1.0)
         val dx = if (points.size <= 1) 0f else size.width / (points.size - 1)
         val coords = points.mapIndexed { index, point -> androidx.compose.ui.geometry.Offset(index * dx, size.height - (point.value / max * size.height).toFloat()) }
         coords.zipWithNext().forEach { (a, b) -> drawLine(colors.secondary, a, b, strokeWidth = 4f) }
         coords.forEach { drawCircle(colors.accent, radius = 6f, center = it) }
     }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+    if (showLabels) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         points.takeLast(5).map { "${SimpleDateFormat("d.M", Locale.forLanguageTag("ru")).format(Date(it.timestamp))} · ${metric.value(it.value, unit)}" }.forEach { Text(it, color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall) }
     }
 }

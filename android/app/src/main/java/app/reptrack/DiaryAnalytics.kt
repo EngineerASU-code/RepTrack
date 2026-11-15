@@ -26,10 +26,10 @@ internal fun calculateProgress(
         .filter { !it.skipped && it.tracksLoad && (exerciseName == null || it.name == exerciseName) }
         .flatMap { e -> e.sets.asSequence().filter { it.done && !it.skipped && it.kind == SetKind.WORK }.map { e.name to it } }
         .toList()
-    val loads = sets.mapNotNull { (_, set) -> set.weight.toDoubleOrNull()?.takeIf { it > 0.0 } }
+    val loads = sets.mapNotNull { (_, set) -> parseFiniteWeight(set.weight)?.takeIf { it > 0.0 } }
     val reps = sets.mapNotNull { (_, set) -> set.reps.toIntOrNull()?.takeIf { it > 0 } }
     val e1rms = sets.mapNotNull { (_, set) ->
-        val weight = set.weight.toDoubleOrNull() ?: return@mapNotNull null
+        val weight = parseFiniteWeight(set.weight) ?: return@mapNotNull null
         val count = set.reps.toIntOrNull() ?: return@mapNotNull null
         if (weight > 0.0 && count in 1..10) weight * (1.0 + count / 30.0) else null
     }
@@ -57,10 +57,10 @@ internal fun calculateProgressSeries(
             .filter { it.done && !it.skipped && it.kind == SetKind.WORK }
             .toList()
         val value = when (metric) {
-            ProgressMetric.MAX_WEIGHT -> sets.mapNotNull { it.weight.toDoubleOrNull()?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
+            ProgressMetric.MAX_WEIGHT -> sets.mapNotNull { parseFiniteWeight(it.weight)?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
             ProgressMetric.MAX_REPS -> sets.mapNotNull { it.reps.toIntOrNull()?.takeIf { reps -> reps > 0 } }.maxOrNull()?.toDouble()
             ProgressMetric.ESTIMATED_ONE_REP_MAX -> sets.mapNotNull { set ->
-                val weight = set.weight.toDoubleOrNull() ?: return@mapNotNull null
+                val weight = parseFiniteWeight(set.weight) ?: return@mapNotNull null
                 val reps = set.reps.toIntOrNull() ?: return@mapNotNull null
                 if (weight > 0.0 && reps in 1..10) weight * (1.0 + reps / 30.0) else null
             }.maxOrNull()
