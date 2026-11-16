@@ -122,22 +122,24 @@ class VisualAcceptanceTest {
             compose.onNodeWithContentDescription("Пропустить отдых", useUnmergedTree = true).performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText("Отдых", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
             compose.onNodeWithText("Отдых", substring = true, useUnmergedTree = true).assertDoesNotExist()
-            compose.onAllNodesWithTag("exercise-details").onFirst().performScrollTo().performClick()
+            // R04 uses leg press, so capture the matching exercise instead of the default bench press.
+            compose.onNodeWithContentDescription("Развернуть Жим ногами").performScrollTo().performClick()
+            compose.onAllNodesWithText("Открыть упражнение").onLast().performScrollTo().performClick()
             listOf("sets", "technique", "muscles").forEach { section ->
                 compose.onNodeWithTag("tab-$section").performClick()
                 if (section == "technique") {
                     compose.onNodeWithText("Техника выполнения").assertIsDisplayed()
-                    compose.onNodeWithContentDescription("Иллюстрация 1 упражнения «Жим штанги средним хватом»; техника по изображению не сертифицирована").assertIsDisplayed()
+                    compose.onNodeWithContentDescription("Иллюстрация 1 упражнения «Жим ногами»; техника по изображению не сертифицирована").assertIsDisplayed()
                     capture("C06-technique")
-                    compose.onNodeWithText("Источник: NASM · Barbell Bench Press").performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText("Источник: ACE · Seated Leg Press").performScrollTo().assertIsDisplayed()
                     capture("C06-technique-bottom")
                 }
                 if (section == "muscles") {
                     compose.onNodeWithTag("muscle-map").assertExists()
                     compose.onNodeWithText("Спереди").assertIsDisplayed()
                     compose.onNodeWithText("Сзади").assertIsDisplayed()
-                    compose.onNodeWithText("Большая грудная мышца").assertIsDisplayed()
-                    compose.onNodeWithText("Мышцы: Free Exercise DB · Barbell Bench Press - Medium Grip").assertExists()
+                    compose.onNodeWithText("Квадрицепсы").assertIsDisplayed()
+                    compose.onNodeWithText("Мышцы: Free Exercise DB · Leg Press").assertExists()
                     compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").assertExists()
                     capture("C07-muscles")
                     compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").performScrollTo().assertIsDisplayed()

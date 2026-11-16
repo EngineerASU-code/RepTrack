@@ -110,9 +110,14 @@ $results = @(
     Save-Compare 'C03-R03' "$candidateRoot/C03-workout-device.png" 'design/Тёмный интерфейс тренировки RepTrack.png' ([System.Drawing.Rectangle]::new(0, 70, 841, 1760)) 'C03 · APK device capture' 'R03 · workout reference'
     Save-Compare 'C01-R01' "$candidateRoot/C01-home-device.png" 'design/Фиолетовый Pro_ концепт RepTrack.png' ([System.Drawing.Rectangle]::new(30, 178, 269, 552)) 'C01 · APK device capture' 'R01 · home phone'
     Save-Compare 'C03-R01' "$candidateRoot/C03-workout-device.png" 'design/Фиолетовый Pro_ концепт RepTrack.png' ([System.Drawing.Rectangle]::new(329, 178, 278, 552)) 'C03 · APK device capture' 'R01 · workout phone'
+    Save-Compare 'C05-R04' "$candidateRoot/C05-approaches-device.png" 'design/Жим ногами — экран тренировки RepTrack.png' ([System.Drawing.Rectangle]::new(0, 70, 841, 1760)) 'C05 · APK exercise sets' 'R04 · exercise reference'
+    Save-Compare 'C06-R04' "$candidateRoot/C06-technique-device.png" 'design/Жим ногами — экран тренировки RepTrack.png' ([System.Drawing.Rectangle]::new(0, 70, 841, 1760)) 'C06 · APK technique' 'R04 · exercise reference'
+    Save-Compare 'C07-R04' "$candidateRoot/C07-muscles-device.png" 'design/Жим ногами — экран тренировки RepTrack.png' ([System.Drawing.Rectangle]::new(0, 70, 841, 1760)) 'C07 · APK muscles' 'R04 · exercise reference'
+    Save-Compare 'C09-R06' "$candidateRoot/C09-plan-device.png" 'design/План тренировок RepTrack_ Push-цикл.png' ([System.Drawing.Rectangle]::new(0, 70, 841, 1760)) 'C09 · APK plan' 'R06 · plan reference'
+    Save-Compare 'C11-R05' "$candidateRoot/C11-chart-device.png" 'design/Прогресс в жиме ногами — RepTrack.png' ([System.Drawing.Rectangle]::new(0, 70, 841, 1760)) 'C11 · APK progress' 'R05 · progress reference'
 )
 $results | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $outDir 'geometry.json')
 
 $font.Dispose()
 $labelBrush.Dispose()
-Write-Output "Wrote four side-by-side and four 50% overlay images to $outDir using $candidateRoot"
+Write-Output "Wrote $($results.Count) side-by-side and $($results.Count) 50% overlay images to $outDir using $candidateRoot"
