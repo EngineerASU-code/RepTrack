@@ -12,6 +12,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +30,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,7 +73,8 @@ private fun DiaryTheme.title() = when (this) {
     DiaryTheme.GRAPHITE_MINIMAL -> "Graphite Minimal"
 }
 private val tabs = listOf("Главная", "Зал", "План", "Прогресс", "История")
-private val tabMarks = listOf("⌂", "⚒", "▦", "↗", "◷")
+private enum class NavigationIcon { HOME, GYM, PLAN, PROGRESS, HISTORY, SETTINGS }
+private val tabIcons = listOf(NavigationIcon.HOME, NavigationIcon.GYM, NavigationIcon.PLAN, NavigationIcon.PROGRESS, NavigationIcon.HISTORY)
 
 class MainActivity : ComponentActivity() {
     private val incomingFile = mutableStateOf<Uri?>(null)
@@ -118,6 +123,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
     LaunchedEffect(state.activeSession?.id) { while (state.activeSession != null) { delay(1000); tick++ } }
 
     val palette = paletteFor(state.settings.theme)
+    val showBottomNavigation = tab != "Зал" || state.activeSession == null
     CompositionLocalProvider(LocalPalette provides palette) {
     MaterialTheme(colorScheme = palette.colorScheme()) {
         Scaffold(
@@ -127,12 +133,12 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                 Text("Track", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
             } }, actions = {
                 TextButton(onClick = { tab = "Люди" }) { Text(state.activeProfile?.name ?: "Профиль", color = LocalPalette.current.secondary) }
-                IconButton(onClick = { tab = "Настройки" }, modifier = Modifier.semantics { contentDescription = "Настройки" }) { Text("⚙", color = LocalPalette.current.secondary) }
+                IconButton(onClick = { tab = "Настройки" }, modifier = Modifier.semantics { contentDescription = "Настройки" }) { NavigationGlyph(NavigationIcon.SETTINGS) }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text)) },
             bottomBar = {
-                NavigationBar(containerColor = LocalPalette.current.surface) {
+                if (showBottomNavigation) NavigationBar(containerColor = LocalPalette.current.surface) {
                     tabs.forEachIndexed { index, item ->
-                        NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { Text(tabMarks[index], style = MaterialTheme.typography.titleMedium) }, label = { Text(item) })
+                        NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { NavigationGlyph(tabIcons[index]) }, label = { Text(item) })
                     }
                 }
             },
@@ -220,6 +226,57 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
 }
 
 @Composable
+private fun NavigationGlyph(icon: NavigationIcon) {
+    val color = LocalContentColor.current
+    Canvas(Modifier.size(24.dp)) {
+        val w = size.width
+        val h = size.height
+        val stroke = 1.8.dp.toPx()
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(
+            color = color,
+            start = androidx.compose.ui.geometry.Offset(w * x1, h * y1),
+            end = androidx.compose.ui.geometry.Offset(w * x2, h * y2),
+            strokeWidth = stroke,
+            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        )
+        when (icon) {
+            NavigationIcon.HOME -> {
+                line(.14f, .48f, .5f, .14f); line(.5f, .14f, .86f, .48f)
+                line(.25f, .44f, .25f, .86f); line(.75f, .44f, .75f, .86f); line(.25f, .86f, .75f, .86f)
+                line(.45f, .86f, .45f, .62f); line(.55f, .86f, .55f, .62f)
+            }
+            NavigationIcon.GYM -> {
+                line(.25f, .5f, .75f, .5f)
+                line(.18f, .3f, .18f, .7f); line(.3f, .34f, .3f, .66f)
+                line(.7f, .34f, .7f, .66f); line(.82f, .3f, .82f, .7f)
+                line(.18f, .5f, .3f, .5f); line(.7f, .5f, .82f, .5f)
+            }
+            NavigationIcon.PLAN -> {
+                line(.16f, .28f, .84f, .28f); line(.16f, .3f, .16f, .82f); line(.84f, .3f, .84f, .82f)
+                line(.16f, .82f, .84f, .82f); line(.32f, .14f, .32f, .38f); line(.68f, .14f, .68f, .38f)
+                line(.32f, .5f, .32f, .5f); line(.5f, .5f, .5f, .5f); line(.68f, .5f, .68f, .5f)
+                line(.32f, .67f, .32f, .67f); line(.5f, .67f, .5f, .67f); line(.68f, .67f, .68f, .67f)
+            }
+            NavigationIcon.PROGRESS -> {
+                line(.16f, .82f, .16f, .58f); line(.38f, .82f, .38f, .43f); line(.6f, .82f, .6f, .27f); line(.82f, .82f, .82f, .14f)
+                line(.12f, .86f, .88f, .86f)
+            }
+            NavigationIcon.HISTORY -> {
+                drawCircle(color, radius = w * .34f, center = androidx.compose.ui.geometry.Offset(w * .5f, h * .52f), style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                line(.5f, .3f, .5f, .53f); line(.5f, .53f, .66f, .63f)
+            }
+            NavigationIcon.SETTINGS -> {
+                drawCircle(color, radius = w * .25f, center = androidx.compose.ui.geometry.Offset(w * .5f, h * .5f), style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                repeat(8) { index ->
+                    val angle = Math.PI / 4 * index
+                    line(.5f + kotlin.math.cos(angle).toFloat() * .29f, .5f + kotlin.math.sin(angle).toFloat() * .29f, .5f + kotlin.math.cos(angle).toFloat() * .43f, .5f + kotlin.math.sin(angle).toFloat() * .43f)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ScreenColumn(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
 }
@@ -237,7 +294,14 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
     val active = state.activeSession
     val next = state.nextPlan
     val cycle = state.plans.filter { it.inCycle }
-    val progressExercise = state.history.asSequence().flatMap { it.exercises.asSequence() }.firstOrNull { it.tracksLoad }?.name
+    val progressExercise = state.history.asSequence().flatMap { it.exercises.asSequence() }
+        .filter { it.tracksLoad }
+        .map { it.name }
+        .distinct()
+        .map { name -> name to calculateProgressSeries(state.history, name, System.currentTimeMillis() - 30 * 86_400_000L).size }
+        .filter { it.second > 0 }
+        .maxByOrNull { it.second }
+        ?.first
     ScreenColumn(modifier) {
         ScreenTitle("Главная", "Твой прогресс. Твой план.")
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
@@ -284,7 +348,7 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
                 Text("${state.workouts} завершённых тренировок · лучший вес ${state.bestWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted)
                 if (progressExercise != null) {
                     Text("$progressExercise · рабочий вес", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-                    TrendGraph(state.history, progressExercise, System.currentTimeMillis() - 30 * 86_400_000L, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 76.dp, showLabels = false)
+                    TrendGraph(state.history, progressExercise, System.currentTimeMillis() - 30 * 86_400_000L, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 76.dp, onPointClick = { navigate("Прогресс") })
                 }
             }
         }
@@ -488,22 +552,216 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
         }
         Spacer(Modifier.height(8.dp))
     }
-    detailsFor?.let { name ->
-        val related = state.history.flatMap { session -> session.exercises.filter { it.name == name && !it.skipped && it.tracksLoad }.map { session to it } }
-        val record = related.flatMap { it.second.sets }.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.mapNotNull { parseFiniteWeight(it.weight)?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
-        AlertDialog(
-            onDismissRequest = { detailsFor = null },
-            title = { Text(name) },
-            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Проверенное описание техники и данные об оборудовании/мышцах пока не добавлены.", color = LocalPalette.current.muted)
-                Text("Личный рекорд: ${record?.let { formatWeight(it, state.settings.weightUnit) } ?: "нет завершённых подходов"}", color = LocalPalette.current.secondary)
-                related.take(5).forEach { (past, item) ->
-                    val sets = item.sets.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}" }
-                    Text("${date(past.endedAt ?: past.startedAt)} · ${sets.ifBlank { "нет выполненных рабочих подходов" }}", color = LocalPalette.current.text)
+    detailsFor?.let { name -> ExerciseDetailDialog(name, state, onDismiss = { detailsFor = null }) }
+}
+
+private data class ExerciseGuide(
+    val equipment: String,
+    val muscles: List<String>,
+    val steps: List<String>,
+    val sourceUrl: String,
+)
+
+private fun verifiedGuideFor(name: String): ExerciseGuide? {
+    val key = name.lowercase(Locale.ROOT).replace('ё', 'е').replace(Regex("[^a-zа-я]+"), " ").trim()
+    if (key !in setOf("жим ногами", "жим ногами в тренажере", "seated leg press", "leg press")) return null
+    return ExerciseGuide(
+        equipment = "Силовой тренажёр",
+        muscles = listOf("Бёдра", "Ягодицы и таз"),
+        steps = listOf(
+            "Настрой сиденье так, чтобы стопы полностью стояли на платформе, а колени в исходном положении были примерно под прямым углом.",
+            "Прижми спину и таз к спинке; сохраняй это положение во время движения.",
+            "Плавно выжми платформу, не отрывая пятки; не переразгибай и не блокируй колени.",
+            "Контролируемо верни платформу, не прижимая бёдра к корпусу.",
+        ),
+        sourceUrl = "https://www.acefitness.org/resources/everyone/exercise-library/154/seated-leg-press/",
+    )
+}
+
+@Composable
+private fun ExerciseDetailDialog(name: String, state: DiarySnapshot, onDismiss: () -> Unit) {
+    var selectedTab by rememberSaveable(name) { mutableIntStateOf(0) }
+    val guide = remember(name) { verifiedGuideFor(name) }
+    val related = state.history.flatMap { session ->
+        session.exercises.filter { it.name == name && !it.skipped && it.tracksLoad }.map { session to it }
+    }.sortedByDescending { it.first.endedAt ?: it.first.startedAt }
+    val workingSets = related.flatMap { it.second.sets }.filter { it.done && !it.skipped && it.kind == SetKind.WORK }
+    val record = workingSets.mapNotNull { parseFiniteWeight(it.weight)?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
+    val context = LocalContext.current
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(.9f).padding(12.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = LocalPalette.current.background,
+            tonalElevation = 8.dp,
+        ) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                        Text(guide?.let { "${it.equipment} · проверенная справка" } ?: "История и рабочие веса", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Закрыть") }
                 }
-            } },
-            confirmButton = { TextButton(onClick = { detailsFor = null }) { Text("Закрыть") } },
-        )
+                TabRow(selectedTabIndex = selectedTab) {
+                    listOf("Сводка", "Техника", "Мышцы").forEachIndexed { index, title ->
+                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title) })
+                    }
+                }
+                Column(
+                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    when (selectedTab) {
+                        0 -> {
+                            if (guide != null) ExerciseGuideIllustration()
+                            else ExerciseMediaPlaceholder("Иллюстрация упражнения ещё не добавлена")
+                            Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("Личный рекорд", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
+                                    Text(record?.let { formatWeight(it, state.settings.weightUnit) } ?: "Нет завершённых рабочих подходов", color = LocalPalette.current.secondary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                    if (workingSets.isNotEmpty()) {
+                                        HorizontalDivider()
+                                        Text("Изменение рабочего веса", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+                                        TrendGraph(state.history, name, null, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 130.dp)
+                                    } else Text("График появится после завершённого рабочего подхода с весом.", color = LocalPalette.current.muted)
+                                }
+                            }
+                            Text("Последние тренировки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
+                            if (related.isEmpty()) Text("Пока нет записей по этому упражнению.", color = LocalPalette.current.muted)
+                            related.take(5).forEach { (session, item) ->
+                                val sets = item.sets.filter { it.done && !it.skipped && it.kind == SetKind.WORK }
+                                    .joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit).ifBlank { "—" }} × ${it.reps.ifBlank { "—" }}" }
+                                Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
+                                        Text(date(session.endedAt ?: session.startedAt), color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+                                        Text(sets.ifBlank { "Нет завершённых рабочих подходов" }, color = LocalPalette.current.muted)
+                                    }
+                                }
+                            }
+                        }
+                        1 -> {
+                            if (guide == null) {
+                                ExerciseMediaPlaceholder("Техника для этого упражнения пока не проверена")
+                                Text("Покажем инструкцию и видео после добавления проверенного материала в каталог.", color = LocalPalette.current.muted)
+                            } else {
+                                ExerciseGuideIllustration()
+                                Text("Техника выполнения", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                                guide.steps.forEachIndexed { index, step ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                                        Surface(shape = CircleShape, color = LocalPalette.current.accent) {
+                                            Text("${index + 1}", Modifier.padding(horizontal = 11.dp, vertical = 5.dp), color = LocalPalette.current.background, fontWeight = FontWeight.Bold)
+                                        }
+                                        Text(step, Modifier.weight(1f), color = LocalPalette.current.text)
+                                    }
+                                }
+                                Text("Справка: ACE Fitness · seated leg press", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(guide.sourceUrl))) } }) { Text("Открыть источник ACE Fitness") }
+                            }
+                        }
+                        else -> {
+                            if (guide == null) {
+                                ExerciseMediaPlaceholder("Карта мышц не добавлена")
+                                Text("Не определяем группы мышц по одному только названию упражнения.", color = LocalPalette.current.muted)
+                            } else {
+                                MuscleMapIllustration()
+                                Text("Основные группы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    guide.muscles.forEach { group ->
+                                        Surface(shape = CircleShape, color = LocalPalette.current.surface) {
+                                            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(Modifier.size(8.dp).background(LocalPalette.current.accent, CircleShape))
+                                                Text(group, color = LocalPalette.current.text, style = MaterialTheme.typography.labelLarge)
+                                            }
+                                        }
+                                    }
+                                }
+                                Text("Группы указаны в справочнике ACE Fitness для seated leg press.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(guide.sourceUrl))) } }) { Text("Открыть источник ACE Fitness") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExerciseMediaPlaceholder(label: String) {
+    val iconColor = LocalPalette.current.secondary
+    Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+        Column(Modifier.fillMaxWidth().height(156.dp).padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Canvas(Modifier.size(48.dp)) {
+                val color = iconColor
+                drawRect(color, topLeft = androidx.compose.ui.geometry.Offset(size.width * .13f, size.height * .13f), size = androidx.compose.ui.geometry.Size(size.width * .74f, size.height * .74f), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                drawCircle(color, radius = size.width * .08f, center = androidx.compose.ui.geometry.Offset(size.width * .37f, size.height * .38f))
+                drawLine(color, androidx.compose.ui.geometry.Offset(size.width * .24f, size.height * .72f), androidx.compose.ui.geometry.Offset(size.width * .45f, size.height * .51f), 2.dp.toPx())
+                drawLine(color, androidx.compose.ui.geometry.Offset(size.width * .45f, size.height * .51f), androidx.compose.ui.geometry.Offset(size.width * .73f, size.height * .71f), 2.dp.toPx())
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(label, color = LocalPalette.current.muted, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun ExerciseGuideIllustration() {
+    val accent = LocalPalette.current.accent
+    val muted = LocalPalette.current.muted
+    Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Схема движения · жим ногами", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+            Canvas(Modifier.fillMaxWidth().height(156.dp)) {
+                val thick = 5.dp.toPx()
+                fun line(a: Pair<Float, Float>, b: Pair<Float, Float>, color: Color = muted, width: Float = thick) {
+                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width * a.first, size.height * a.second), androidx.compose.ui.geometry.Offset(size.width * b.first, size.height * b.second), width, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                }
+                // Equipment outline and a simplified, non-anatomical movement path.
+                line(.16f to .84f, .85f to .84f)
+                line(.22f to .78f, .39f to .34f)
+                line(.39f to .34f, .48f to .66f)
+                line(.45f to .62f, .66f to .62f)
+                line(.44f to .67f, .68f to .67f)
+                line(.49f to .62f, .60f to .48f, accent, thick * 1.4f)
+                line(.60f to .48f, .69f to .37f, accent, thick * 1.4f)
+                line(.63f to .47f, .77f to .24f, accent, thick * 1.4f)
+                line(.77f to .24f, .88f to .24f, accent, thick)
+                line(.78f to .17f, .78f to .32f, accent, thick)
+                line(.85f to .17f, .85f to .32f, accent, thick)
+                line(.72f to .42f, .82f to .34f, accent, thick * .8f)
+                drawCircle(muted, radius = 9.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width * .46f, size.height * .52f))
+            }
+            Text("Тренажёр и направление выжимания", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun MuscleMapIllustration() {
+    val accent = LocalPalette.current.accent
+    val muted = LocalPalette.current.muted
+    Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Зоны, отмеченные в справочнике", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+            Canvas(Modifier.fillMaxWidth().height(188.dp)) {
+                val centerX = size.width / 2f
+                val scale = size.height
+                val thin = 3.dp.toPx()
+                drawCircle(muted.copy(alpha = .6f), radius = scale * .065f, center = androidx.compose.ui.geometry.Offset(centerX, scale * .15f), style = androidx.compose.ui.graphics.drawscope.Stroke(thin))
+                fun line(x1: Float, y1: Float, x2: Float, y2: Float, color: Color = muted, width: Float = thin) = drawLine(color, androidx.compose.ui.geometry.Offset(centerX + scale * x1, scale * y1), androidx.compose.ui.geometry.Offset(centerX + scale * x2, scale * y2), width, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                line(-.1f, .26f, .1f, .26f); line(-.1f, .26f, -.18f, .47f); line(.1f, .26f, .18f, .47f)
+                line(-.1f, .26f, -.09f, .5f); line(.1f, .26f, .09f, .5f)
+                line(-.18f, .47f, .18f, .47f, accent, 9.dp.toPx())
+                line(-.09f, .5f, -.11f, .76f, accent, 8.dp.toPx()); line(.09f, .5f, .11f, .76f, accent, 8.dp.toPx())
+                line(-.11f, .76f, -.12f, .94f); line(.11f, .76f, .12f, .94f)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(Modifier.size(10.dp), shape = CircleShape, color = accent) {}
+                Text("Бёдра · ягодицы и таз", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
     }
 }
 
@@ -1034,7 +1292,7 @@ private fun ProgressScreen(state: DiarySnapshot, modifier: Modifier, openSession
                         FilterChip(selected = metric == option, onClick = { metric = option }, label = { Text(option.title()) })
                     }
                 }
-                if (exercise != null) TrendGraph(state.history, exercise, from, metric, state.settings.weightUnit)
+                if (exercise != null) TrendGraph(state.history, exercise, from, metric, state.settings.weightUnit, onPointClick = openSession)
                 points.takeLast(5).forEach { point ->
                     OutlinedButton(onClick = { openSession(point.sessionId) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
                         Text("Открыть тренировку · ${date(point.timestamp)} · ${metric.value(point.value, state.settings.weightUnit)}")
@@ -1068,20 +1326,60 @@ private fun TrendGraph(
     unit: WeightUnit,
     height: androidx.compose.ui.unit.Dp = 150.dp,
     showLabels: Boolean = true,
+    onPointClick: ((String) -> Unit)? = null,
 ) {
     val colors = LocalPalette.current
     val points = calculateProgressSeries(history, exerciseName, from, metric = metric)
     if (points.isEmpty()) { Text("Нет завершённых рабочих подходов для графика.", color = LocalPalette.current.muted); return }
-    Canvas(Modifier.fillMaxWidth().height(height)) {
-        val max = (points.maxOf { it.value } * 1.1).coerceAtLeast(1.0)
+    val graphModifier = Modifier.fillMaxWidth().height(height).then(
+        if (onPointClick == null) Modifier else Modifier.pointerInput(points) {
+            val chartWidth = size.width.toFloat().coerceAtLeast(1f)
+            detectTapGestures { offset ->
+                val index = if (points.size == 1) 0 else (offset.x / chartWidth * (points.size - 1)).toInt().coerceIn(points.indices)
+                onPointClick(points[index].sessionId)
+            }
+        },
+    )
+    Canvas(graphModifier.semantics { contentDescription = "График ${metric.title()} для упражнения $exerciseName, ${points.size} записей" }) {
+        val top = 8.dp.toPx()
+        val bottom = size.height - 8.dp.toPx()
+        val low = points.minOf { it.value }
+        val high = points.maxOf { it.value }
+        val valuePadding = ((high - low) * .18).coerceAtLeast(high * .12).coerceAtLeast(.25)
+        val chartMin = (low - valuePadding).coerceAtLeast(0.0)
+        val chartMax = (high + valuePadding).coerceAtLeast(chartMin + 1.0)
+        val chartHeight = (bottom - top).coerceAtLeast(1f)
+        for (index in 0..4) {
+            val y = top + chartHeight * index / 4
+            drawLine(colors.muted.copy(alpha = .19f), androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1.dp.toPx())
+        }
         val dx = if (points.size <= 1) 0f else size.width / (points.size - 1)
-        val coords = points.mapIndexed { index, point -> androidx.compose.ui.geometry.Offset(index * dx, size.height - (point.value / max * size.height).toFloat()) }
-        coords.zipWithNext().forEach { (a, b) -> drawLine(colors.secondary, a, b, strokeWidth = 4f) }
-        coords.forEach { drawCircle(colors.accent, radius = 6f, center = it) }
+        val coords = points.mapIndexed { index, point ->
+            val normalized = ((point.value - chartMin) / (chartMax - chartMin)).toFloat()
+            androidx.compose.ui.geometry.Offset(index * dx, bottom - normalized * chartHeight)
+        }
+        if (coords.size > 1) {
+            val linePath = androidx.compose.ui.graphics.Path().apply {
+                moveTo(coords.first().x, coords.first().y)
+                coords.drop(1).forEach { lineTo(it.x, it.y) }
+            }
+            val areaPath = androidx.compose.ui.graphics.Path().apply {
+                moveTo(coords.first().x, bottom)
+                coords.forEach { lineTo(it.x, it.y) }
+                lineTo(coords.last().x, bottom)
+                close()
+            }
+            drawPath(areaPath, androidx.compose.ui.graphics.Brush.verticalGradient(listOf(colors.accent.copy(alpha = .28f), colors.accent.copy(alpha = 0f)), top, bottom))
+            drawPath(linePath, colors.accent, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+        }
+        coords.forEach { point ->
+            drawCircle(colors.background, radius = 6.dp.toPx(), center = point)
+            drawCircle(colors.accent, radius = 4.dp.toPx(), center = point)
+        }
     }
     if (showLabels) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         points.takeLast(5).map { "${SimpleDateFormat("d.M", Locale.forLanguageTag("ru")).format(Date(it.timestamp))} · ${metric.value(it.value, unit)}" }.forEach { Text(it, color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall) }
-    }
+    } else if (points.size == 1) Text("${date(points.single().timestamp)} · ${metric.value(points.single().value, unit)}", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
 }
 
 @Composable
