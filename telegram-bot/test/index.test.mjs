@@ -44,6 +44,38 @@ const packageId = "44444444-4444-4444-8444-444444444444";
 const sessionId = "55555555-5555-4555-8555-555555555555";
 const fingerprint = "A1B2 C3D4 E5F6 1020 3040";
 
+test("webhook rejects unauthorized and malformed requests before claiming an update", async () => {
+  const DB = updateDb();
+  const env = { DB, BOT_TOKEN: "test", WEBHOOK_SECRET: "secret" };
+  const request = (secret, body) => new Request("https://worker.test/telegram/webhook", {
+    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": secret, "Content-Type": "application/json" }, body,
+  });
+  assert.equal((await worker.fetch(request("wrong", JSON.stringify({ update_id: 30 })), env)).status, 401);
+  assert.equal((await worker.fetch(request("secret", JSON.stringify({ update_id: "30" })), env)).status, 400);
+  assert.equal(DB.rows.size, 0);
+});
+
+test("failed webhook handling remains retryable and is completed after recovery", async () => {
+  const DB = updateDb();
+  const env = { DB, BOT_TOKEN: "test", WEBHOOK_SECRET: "secret" };
+  const originalFetch = globalThis.fetch;
+  const request = () => new Request("https://worker.test/telegram/webhook", {
+    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "secret", "Content-Type": "application/json" },
+    body: JSON.stringify({ update_id: 31, message: { chat: { id: 101, type: "private" }, text: "/start" } }),
+  });
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => { calls++; throw new Error("simulated connection failure"); };
+    assert.equal((await worker.fetch(request(), env)).status, 500);
+    assert.equal(DB.rows.get(31).status, "FAILED");
+    globalThis.fetch = async () => { calls++; return Response.json({ ok: true, result: {} }); };
+    assert.equal((await worker.fetch(request(), env)).status, 200);
+    assert.equal(DB.rows.get(31).status, "DONE");
+    assert.equal((await worker.fetch(request(), env)).status, 200);
+    assert.equal(calls, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("route registration parses role and link identity", () => {
   const registration = parseRouteRegistration(new TextEncoder().encode(JSON.stringify({
     format: "reptrack-telegram-route", version: 1, linkId, role: "TRAINER",

@@ -142,11 +142,10 @@ internal object ExchangeCrypto {
 
     fun wrapSecret(secret: ByteArray, linkId: String): ByteArray {
         val key = wrappingKey()
-        val nonce = ByteArray(nonceBytes).also(SecureRandom()::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(tagBits, nonce))
+        cipher.init(Cipher.ENCRYPT_MODE, key)
         cipher.updateAAD(linkId.toByteArray())
-        return nonce + cipher.doFinal(secret)
+        return cipher.iv + cipher.doFinal(secret)
     }
 
     fun unwrapSecret(wrapped: ByteArray, linkId: String): ByteArray {

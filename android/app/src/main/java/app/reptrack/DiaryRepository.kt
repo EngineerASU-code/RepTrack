@@ -188,6 +188,11 @@ class DiaryRepository(context: Context, databaseName: String = "reptrack.db") {
     fun createTraineeProfile(name: String) = helper.createTraineeProfile(name)
     fun renameProfile(id: String, name: String) = helper.renameProfile(id, name)
     fun setActiveProfile(id: String) = helper.setActiveProfile(id)
+    internal fun createSourceReportsProfile() {
+        check(appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) { "Импорт тестовых отчётов доступен только в debug-сборке" }
+        val sessions = appContext.assets.open("workout-reports.json").use { decodeSourceWorkoutReports(it.readBytes()) }
+        helper.importSourceReports(sessions)
+    }
     internal fun createDemoProfile() {
         check(appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             "Тестовые данные доступны только в debug-сборке"
@@ -668,6 +673,25 @@ internal class DiaryDb(context: Context, databaseName: String = "reptrack.db") :
             if (imported > 0) db.update("profiles", ContentValues().apply { put("last_imported_at", System.currentTimeMillis()) }, "id=?", arrayOf(ownerId))
             db.setTransactionSuccessful()
             return imported
+        } finally { db.endTransaction() }
+    }
+
+    fun importSourceReports(sessions: List<TrainingSession>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.insertWithOnConflict("profiles", null, ContentValues().apply {
+                put("id", sourceReportsProfileId); put("name", "Мои тренировки · импорт"); put("kind", ProfileKind.TRAINEE.name); put("created_at", System.currentTimeMillis())
+            }, SQLiteDatabase.CONFLICT_IGNORE)
+            sessions.forEach { session ->
+                require(session.ownerId == sourceReportsProfileId && session.status == SessionStatus.COMPLETED)
+                val existingOwner = db.rawQuery("SELECT owner_id FROM sessions WHERE id=?", arrayOf(session.id)).use { if (it.moveToFirst()) it.getString(0) else null }
+                require(existingOwner == null || existingOwner == sourceReportsProfileId) { "ID отчёта принадлежит другому профилю" }
+                if (existingOwner == null) insertImportedSession(db, sourceReportsProfileId, session)
+            }
+            setSetting("active_profile_id", sourceReportsProfileId)
+            createStarterPlans()
+            db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
 

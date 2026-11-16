@@ -39,7 +39,7 @@ class DiaryRepositoryInstrumentedTest {
         val helper = DiaryDb(context, name)
         try {
             val db = helper.writableDatabase
-            assertEquals(6, db.version)
+            assertEquals(7, db.version)
             assertEquals(1, db.rawQuery("SELECT COUNT(*) FROM plans WHERE id='plan-v1'", null).use { it.moveToFirst(); it.getInt(0) })
             assertEquals(1, db.rawQuery("SELECT COUNT(*) FROM sessions WHERE id='session-v1'", null).use { it.moveToFirst(); it.getInt(0) })
             assertEquals(personalProfileId, db.rawQuery("SELECT owner_id FROM sessions WHERE id='session-v1'", null).use { it.moveToFirst(); it.getString(0) })
@@ -65,7 +65,7 @@ class DiaryRepositoryInstrumentedTest {
         val helper = DiaryDb(context, name)
         try {
             val db = helper.writableDatabase
-            assertEquals(6, db.version)
+            assertEquals(7, db.version)
             assertEquals(0, db.rawQuery("SELECT COUNT(*) FROM pairing_pending", null).use { it.moveToFirst(); it.getInt(0) })
             val hasWrappedKey = db.rawQuery("PRAGMA table_info(pairing_pending)", null).use { c ->
                 buildList { while (c.moveToNext()) add(c.getString(c.getColumnIndexOrThrow("name"))) }.contains("private_key_wrapped")
@@ -132,7 +132,7 @@ class DiaryRepositoryInstrumentedTest {
             val plan = repository.load().plans.single()
             repository.addExercise(plan.id, "Жим лёжа")
             val sessionId = repository.start(plan.id)
-            val set = repository.load().activeSession!!.exercises.single().sets.single()
+            val set = repository.load().activeSession!!.exercises.single().sets.first()
             repository.updateSet(set.id, weight = "", reps = "8")
             repository.toggleSet(set)
             repository.finish(sessionId)
@@ -350,7 +350,7 @@ class DiaryRepositoryInstrumentedTest {
             val plan = trainee.load().plans.single()
             trainee.addExercise(plan.id, "Жим лёжа")
             val sessionId = trainee.start(plan.id)
-            val set = trainee.load().activeSession!!.exercises.single().sets.single()
+            val set = trainee.load().activeSession!!.exercises.single().sets.first()
             trainee.updateSet(set.id, weight = "80", reps = "8")
             trainee.toggleSet(set)
             trainee.finish(sessionId)
@@ -400,7 +400,7 @@ class DiaryRepositoryInstrumentedTest {
             val plan = trainee.load().plans.single()
             trainee.addExercise(plan.id, "Жим лёжа")
             val sessionId = trainee.start(plan.id)
-            val set = trainee.load().activeSession!!.exercises.single().sets.single()
+            val set = trainee.load().activeSession!!.exercises.single().sets.first()
             trainee.updateSet(set.id, weight = "80", reps = "8")
             trainee.toggleSet(set)
             val delivery = trainee.finishAndCreateTelegramDelivery(traineeLink.id, sessionId)

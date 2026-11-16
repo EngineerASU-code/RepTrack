@@ -11,6 +11,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -123,7 +127,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                 Text("Track", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
             } }, actions = {
                 TextButton(onClick = { tab = "Люди" }) { Text(state.activeProfile?.name ?: "Профиль", color = LocalPalette.current.secondary) }
-                IconButton(onClick = { tab = "Настройки" }) { Text("⚙", color = LocalPalette.current.secondary) }
+                IconButton(onClick = { tab = "Настройки" }, modifier = Modifier.semantics { contentDescription = "Настройки" }) { Text("⚙", color = LocalPalette.current.secondary) }
             }, colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text)) },
             bottomBar = {
                 NavigationBar(containerColor = LocalPalette.current.surface) {
@@ -305,6 +309,9 @@ private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modi
         if (showDemoProfile) OutlinedButton(onClick = openDemoProfile, modifier = Modifier.fillMaxWidth()) {
             Text("Создать / открыть тестовый профиль")
         }
+        if (showDemoProfile) OutlinedButton(onClick = { vm.createSourceReportsProfile() }, modifier = Modifier.fillMaxWidth()) {
+            Text("Импортировать мои отчёты тренировок")
+        }
         OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("Поиск профиля") }, singleLine = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -446,10 +453,12 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                 }
             }
             session.exercises.forEach { exercise ->
-                Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                var expanded by rememberSaveable(session.id, exercise.id) { mutableStateOf(exercise.position == 0) }
+                Card(border = BorderStroke(1.dp, if (expanded) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = 0.2f)), colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("${exercise.position + 1}. ${exercise.name}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
+                            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("${exercise.position + 1}. ${exercise.name} ${if (expanded) "⌃" else "⌄"}", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text) }
+                            if (expanded) {
                             TextButton(onClick = { vm.skipExercise(exercise.id, !exercise.skipped) }) { Text(if (exercise.skipped) "Вернуть" else "Пропустить") }
                             Box {
                                 TextButton(onClick = { replacementFor = exercise.id }) { Text("Замена") }
@@ -460,6 +469,8 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                                 }
                             }
                         }
+                        }
+                        if (expanded) {
                         state.history.asSequence().flatMap { it.exercises.asSequence() }.firstOrNull { it.name == exercise.name }?.let { previous ->
                             val prev = previous.sets.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}" }
                             if (prev.isNotBlank()) Text("Прошлый раз · $prev", style = MaterialTheme.typography.bodySmall, color = LocalPalette.current.muted)
@@ -470,6 +481,7 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                             SetEditor(index, set, vm, tick, exercise.tracksLoad, state.settings.weightUnit)
                         }
                         if (!exercise.skipped) OutlinedButton(onClick = { vm.addSet(exercise.id) }, modifier = Modifier.fillMaxWidth()) { Text("＋ Добавить подход") }
+                        }
                     }
                 }
             }
@@ -477,7 +489,7 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
         Spacer(Modifier.height(8.dp))
     }
     detailsFor?.let { name ->
-        val related = state.history.mapNotNull { session -> session.exercises.firstOrNull { it.name == name && !it.skipped }?.let { session to it } }
+        val related = state.history.flatMap { session -> session.exercises.filter { it.name == name && !it.skipped && it.tracksLoad }.map { session to it } }
         val record = related.flatMap { it.second.sets }.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.mapNotNull { parseFiniteWeight(it.weight)?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
         AlertDialog(
             onDismissRequest = { detailsFor = null },
@@ -507,7 +519,7 @@ private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tick: Lo
                 OutlinedTextField(weight, { weight = it.filter { c -> c.isDigit() || c == '.' || c == ',' }.take(8); vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }, Modifier.weight(1f), label = { Text("Вес, ${unit.label()}") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                 OutlinedTextField(reps, { reps = it.filter(Char::isDigit).take(4); vm.updateSet(set.id, reps = reps) }, Modifier.weight(1f), label = { Text("Повторы") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             } else Text("Без силовой нагрузки", Modifier.weight(2f), color = LocalPalette.current.muted)
-            Checkbox(checked = set.done, onCheckedChange = { vm.toggleSet(set) }, modifier = Modifier.size(48.dp))
+            Checkbox(checked = set.done, onCheckedChange = { vm.toggleSet(set) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Отметить подход ${index + 1}" })
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             FilterChip(selected = set.kind == SetKind.WORK, onClick = { vm.setKind(set.id, if (set.kind == SetKind.WORK) SetKind.WARMUP else SetKind.WORK) }, label = { Text(if (set.kind == SetKind.WORK) "Рабочий" else "Разминочный") })
@@ -963,8 +975,8 @@ private fun SessionHistoryCard(session: TrainingSession, unit: WeightUnit, canSe
             Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(session.planName, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text("Макс. вес ${session.maxWeightKg?.let { formatWeight(it, unit) } ?: "—"}", color = LocalPalette.current.secondary) }
-                    val duration = ((session.endedAt ?: session.startedAt) - session.startedAt).coerceAtLeast(0) / 60000L
-                    Text("${date(session.startedAt)} · ${duration} мин · ${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов", color = LocalPalette.current.muted)
+                    val duration = if (session.comment.contains("время и длительность неизвестны")) "длительность не указана" else "${((session.endedAt ?: session.startedAt) - session.startedAt).coerceAtLeast(0) / 60000L} мин"
+                    Text("${date(session.startedAt)} · $duration · ${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов", color = LocalPalette.current.muted)
                     if (session.comment.isNotBlank()) Text(session.comment, color = LocalPalette.current.secondary)
                     if (canSend) OutlinedButton(onClick = resend, modifier = Modifier.fillMaxWidth()) { Text("Повторно подготовить PDF и пакет") }
                     session.exercises.forEach { exercise ->
