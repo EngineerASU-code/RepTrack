@@ -3,11 +3,8 @@ package app.reptrack
 import android.graphics.Bitmap
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -25,110 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
-/** Supplemental captures: C12 uses an in-memory snapshot; Activity cases use new synthetic trainee profiles. */
-@RunWith(AndroidJUnit4::class)
-class VisualAcceptanceSupplementTest {
-    @get:Rule val compose = createComposeRule()
-
-    @Test
-    fun captureC12ProgressWithNoData() {
-        compose.setContent {
-            androidx.compose.runtime.CompositionLocalProvider(LocalPalette provides paletteFor(DiaryTheme.PURPLE_PRO)) {
-                MaterialTheme(colorScheme = paletteFor(DiaryTheme.PURPLE_PRO).colorScheme()) {
-                    Surface(color = LocalPalette.current.background) {
-                        ProgressScreen(DiarySnapshot(loading = false)) {}
-                    }
-                }
-            }
-        }
-
-        compose.onNodeWithText("Нет записей с нагрузкой").assertIsDisplayed()
-        compose.onNodeWithText("Выберите упражнение").assertIsDisplayed()
-        compose.onNodeWithTag("progress-chart").assertDoesNotExist()
-        capture("C12-progress-no-data")
-    }
-
-    @Test
-    fun captureC12ProgressWithOnePoint() {
-        val now = System.currentTimeMillis()
-        val snapshot = DiarySnapshot(
-            loading = false,
-            history = listOf(
-                TrainingSession(
-                    id = "visual-c12-one-point",
-                    planId = null,
-                    planName = "Синтетическая проверка",
-                    status = SessionStatus.COMPLETED,
-                    startedAt = now - 60_000,
-                    endedAt = now,
-                    exercises = listOf(
-                        SessionExercise(
-                            id = "visual-c12-bench",
-                            name = "Жим штанги",
-                            position = 0,
-                            skipped = false,
-                            tracksLoad = true,
-                            sets = listOf(
-                                TrainingSet(
-                                    id = "visual-c12-set",
-                                    position = 0,
-                                    weight = "60",
-                                    reps = "8",
-                                    kind = SetKind.WORK,
-                                    done = true,
-                                    skipped = false,
-                                    restSeconds = 90,
-                                    restUntil = null,
-                                    restRemaining = 0,
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        )
-        compose.setContent {
-            androidx.compose.runtime.CompositionLocalProvider(LocalPalette provides paletteFor(DiaryTheme.PURPLE_PRO)) {
-                MaterialTheme(colorScheme = paletteFor(DiaryTheme.PURPLE_PRO).colorScheme()) {
-                    Surface(color = LocalPalette.current.background) {
-                        ProgressScreen(snapshot) {}
-                    }
-                }
-            }
-        }
-
-        compose.onNodeWithText("Жим штанги").assertIsDisplayed()
-        compose.onNodeWithContentDescription("График Максимальный вес. 1 тренировок.", substring = true).assertExists()
-        capture("C12-progress-one-point")
-    }
-
-    private fun capture(name: String) {
-        compose.waitForIdle()
-        Thread.sleep(250)
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val directory = File(context.getExternalFilesDir(null), "visual-acceptance").apply { mkdirs() }
-        val configuration = context.resources.configuration
-        val metadata =
-            "Android=${android.os.Build.VERSION.SDK_INT}\n" +
-                "viewport=${configuration.screenWidthDp}x${configuration.screenHeightDp}dp\n" +
-                "density=${context.resources.displayMetrics.density}\nfontScale=${configuration.fontScale}\n" +
-                "theme=PURPLE_PRO\nprofile=synthetic in-memory snapshot\nvariant=debug\n" +
-                "commit=${InstrumentationRegistry.getArguments().getString("gitCommit") ?: "not-provided"}\n" +
-                "worktree=${InstrumentationRegistry.getArguments().getString("worktree") ?: "not-provided"}\n" +
-                "capture=ProgressScreen Compose content\n"
-        File(directory, "device.txt").writeText(metadata)
-        File(directory, "$name-metadata.txt").writeText(metadata)
-        File(directory, "$name.png").outputStream().use {
-            compose.onRoot().captureToImage().asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
-        File(directory, "$name-device.png").outputStream().use {
-            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
-                .compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
-    }
-}
-
-/** Activity captures use only newly created synthetic trainee profiles. */
+/** Acceptance captures use the packaged debug app with newly created synthetic trainee profiles. */
 @RunWith(AndroidJUnit4::class)
 class VisualAcceptanceActivitySupplementTest {
     @get:Rule val compose = createEmptyComposeRule()
@@ -195,6 +89,85 @@ class VisualAcceptanceActivitySupplementTest {
             capture("C02-home-empty")
         } finally {
             scenario.close()
+        }
+    }
+
+    @Test
+    fun captureC12ProgressWithNoDataFromApp() = withSyntheticProfile("C12-empty") {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("nav-progress").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("nav-progress").performClick()
+            compose.onNodeWithText("Нет записей с нагрузкой").assertIsDisplayed()
+            compose.onNodeWithText("Выберите упражнение").assertIsDisplayed()
+            compose.onNodeWithTag("progress-chart").assertDoesNotExist()
+            capture("C12-progress-no-data")
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun captureC12ProgressWithOnePointFromApp() = withSyntheticProfile("C12-one-point") { repository ->
+        repository.createPlan("Синтетическая проверка прогресса")
+        val plan = repository.load().plans.first { it.name == "Синтетическая проверка прогресса" }
+        repository.addExercise(plan.id, "Жим штанги средним хватом")
+        val exercise = repository.load().plans.first { it.id == plan.id }.exercises.single()
+        repository.updateExercise(exercise.copy(restSeconds = 0))
+        val sessionId = repository.start(plan.id)
+        val set = repository.load().activeSession?.exercises?.single()?.sets?.first()
+            ?: error("Synthetic progress set was not created")
+        repository.updateSet(set.id, "60", "8")
+        repository.toggleSet(set.copy(weight = "60", reps = "8"))
+        repository.finish(sessionId)
+
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        try {
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("nav-progress").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("nav-progress").performClick()
+            compose.onNodeWithText("Жим штанги средним хватом").assertIsDisplayed()
+            compose.onNodeWithTag("progress-chart").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("1 тренировка", substring = true).assertExists()
+            capture("C12-progress-one-point")
+        } finally {
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun captureC08FinishedRestFromApp() = withSyntheticProfile("C08-finished-rest") { repository ->
+        repository.createPlan("Синтетическая проверка таймера")
+        val plan = repository.load().plans.first { it.name == "Синтетическая проверка таймера" }
+        repository.addExercise(plan.id, "Жим штанги средним хватом")
+        val exercise = repository.load().plans.first { it.id == plan.id }.exercises.single()
+        repository.updateExercise(exercise.copy(restSeconds = 10))
+        var sessionId: String? = null
+        var scenario: ActivityScenario<MainActivity>? = null
+        try {
+            sessionId = repository.start(plan.id)
+            org.junit.Assert.assertEquals(sessionId, repository.load().activeSession?.id)
+            scenario = ActivityScenario.launch(MainActivity::class.java)
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("nav-gym").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithTag("nav-gym").performClick()
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("finish-workout").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithContentDescription("Отметить подход 1").performScrollTo().performClick()
+            compose.waitUntil(5_000) {
+                repository.load().activeSession?.exercises?.singleOrNull()?.sets?.firstOrNull()?.restUntil != null
+            }
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("Отдых", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            val restSet = repository.load().activeSession?.exercises?.single()?.sets?.first()
+                ?: error("Synthetic rest set disappeared")
+            org.junit.Assert.assertEquals(10, restSet.restSeconds)
+            val restDeadline = restSet.restUntil ?: error("Rest deadline was not saved")
+            compose.waitUntil(13_000) { restDeadline <= System.currentTimeMillis() }
+            compose.waitUntil(4_000) { compose.onAllNodesWithTag("rest-complete").fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Отдых завершён").assertIsDisplayed()
+            capture("C08-rest-finished")
+        } finally {
+            scenario?.close()
+            sessionId?.let(repository::cancel)
         }
     }
 
@@ -291,15 +264,63 @@ class VisualAcceptanceActivitySupplementTest {
     private fun withSyntheticProfile(name: String, run: (DiaryRepository) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val original = readUiPreferences(context)
+        val originalRestTimerEnabled = readRestTimerEnabled(context)
+        val bootstrap = DiaryRepository(context)
+        val profiles = bootstrap.load().profiles
+        val preservedProfileId = profiles.firstOrNull { it.id == original.first && !it.name.startsWith("Visual acceptance · ") }?.id
+            ?: profiles.firstOrNull { it.kind == ProfileKind.PERSONAL }?.id
+            ?: personalProfileId
+        val previousSyntheticIds = profiles.filter { it.name.startsWith("Visual acceptance · ") }.map { it.id }
+        bootstrap.close()
+        deleteSyntheticProfiles(context, previousSyntheticIds)
+
         val repository = DiaryRepository(context)
+        var syntheticProfileId: String? = null
         try {
-            repository.createTraineeProfile("Visual acceptance · $name · ${System.currentTimeMillis()}")
+            repository.setActiveProfile(preservedProfileId)
+            repository.createTraineeProfile("Visual acceptance · $name")
+            syntheticProfileId = repository.load().activeProfile?.id
+                ?: error("Synthetic acceptance profile was not selected")
             repository.setTheme(DiaryTheme.PURPLE_PRO)
+            repository.setRestTimerEnabled(true)
             run(repository)
         } finally {
-            repository.setActiveProfile(original.first)
+            repository.setActiveProfile(preservedProfileId)
             repository.setTheme(original.second)
+            repository.setRestTimerEnabled(originalRestTimerEnabled)
             repository.close()
+            syntheticProfileId?.let { deleteSyntheticProfiles(context, listOf(it)) }
+        }
+    }
+
+    private fun readRestTimerEnabled(context: Context): Boolean {
+        val databaseFile = context.getDatabasePath("reptrack.db")
+        if (!databaseFile.exists()) return true
+        return SQLiteDatabase.openDatabase(databaseFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            db.rawQuery("SELECT value FROM app_settings WHERE key='rest_timer_enabled'", null).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0).toBooleanStrictOrNull() ?: true else true
+            }
+        }
+    }
+
+    private fun deleteSyntheticProfiles(context: Context, profileIds: List<String>) {
+        val databaseFile = context.getDatabasePath("reptrack.db")
+        if (profileIds.isEmpty() || !databaseFile.exists()) return
+        SQLiteDatabase.openDatabase(databaseFile.path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.setForeignKeyConstraintsEnabled(true)
+            db.beginTransaction()
+            try {
+                profileIds.forEach { id ->
+                    db.delete("sessions", "owner_id=?", arrayOf(id))
+                    db.delete("program_assignments", "profile_id=?", arrayOf(id))
+                    db.delete("imported_events", "owner_id=?", arrayOf(id))
+                    db.delete("plans", "owner_id=?", arrayOf(id))
+                    db.delete("profiles", "id=? AND name LIKE 'Visual acceptance · %'", arrayOf(id))
+                }
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
+            }
         }
     }
 

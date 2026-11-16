@@ -20,6 +20,8 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.platform.testTag
@@ -66,10 +68,10 @@ import androidx.core.content.FileProvider
 
 internal data class AppPalette(val background: Color, val surface: Color, val accent: Color, val secondary: Color, val muted: Color, val text: Color, val light: Boolean = false) {
     fun colorScheme() = if (light) lightColorScheme(background = background, surface = surface, primary = accent, secondary = secondary, onBackground = text, onSurface = text)
-    else darkColorScheme(background = background, surface = surface, primary = accent, secondary = secondary, onBackground = text, onSurface = text)
+    else darkColorScheme(background = background, surface = surface, primary = accent, onPrimary = Color.Black, secondary = secondary, onBackground = text, onSurface = text)
 }
 
-private val purplePro = AppPalette(Color(0xFF12101C), Color(0xFF211C31), Color(0xFF8957F6), Color(0xFFB4A0FF), Color(0xFFA9A3B9), Color(0xFFF7F5FC))
+private val purplePro = AppPalette(Color(0xFF12101C), Color(0xFF211C31), Color(0xFF9B75FF), Color(0xFFB4A0FF), Color(0xFFA9A3B9), Color(0xFFF7F5FC))
 internal val LocalPalette = staticCompositionLocalOf { purplePro }
 internal fun paletteFor(theme: DiaryTheme) = when (theme) {
     DiaryTheme.PURPLE_PRO -> purplePro
@@ -156,8 +158,9 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                     if (exerciseScreen != null) Text(
                         if (LocalDensity.current.fontScale >= 1.5f) "Упражнение" else exerciseScreen.orEmpty(),
                         color = LocalPalette.current.text,
+                        style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                     else if (catalogScreen) Text("Каталог упражнений", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
@@ -168,7 +171,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                         Surface(Modifier.size(30.dp), shape = CircleShape, color = LocalPalette.current.accent.copy(alpha = .18f)) { Box(contentAlignment = Alignment.Center) { NavigationGlyph(NavigationIcon.GYM) } }
                         Spacer(Modifier.width(8.dp))
                         Text("Rep", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
-                        Text("Track", color = LocalPalette.current.accent, fontWeight = FontWeight.Bold)
+                        Text("Track", color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold)
                     }
                 },
                 navigationIcon = {
@@ -202,7 +205,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                         Column(
                             itemModifier.heightIn(min = 56.dp)
                                 .semantics { contentDescription = item; this.selected = selected }
-                                .clickable { tab = item }
+                                .clickable(interactionSource = null, indication = null) { tab = item }
                                 .testTag("nav-$tag")
                                 .padding(vertical = 5.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -223,34 +226,38 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                 } else state.activeSession?.let { WorkoutBottomBar(it, tick, pause = vm::pauseRest, resume = vm::resumeRest, skip = vm::skipRest) { confirm = "finish" } }
             },
         ) { padding ->
-            if (state.loading) Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            else if (exerciseScreen != null) ExerciseDetailScreen(exerciseScreen!!, state, vm, tick, Modifier.padding(padding), onBack = { exerciseScreen = null }) { id -> historyTarget = id; tab = "История"; exerciseScreen = null; catalogScreen = false }
-            else if (catalogScreen) ExerciseCatalogScreen(
-                state,
-                Modifier.padding(padding),
-                selectForPlan = catalogTargetPlanId != null,
-                selectedNames = catalogSelectedNames,
-                onSelectedNamesChange = { catalogSelectedNames = it },
-                openExercise = { exerciseScreen = it },
-                addSelected = { names -> names.forEach { vm.addExercise(catalogTargetPlanId!!, it) }; catalogSelectedNames = emptySet(); catalogTargetPlanId = null; catalogScreen = false },
-            )
-            else when (tab) {
-                "Зал" -> GymScreen(state, vm, Modifier.padding(padding), tick, { confirm = it }, { catalogSelectedNames = emptySet(); catalogTargetPlanId = null; catalogScreen = true }) { exerciseScreen = it }
-                "План" -> PlanScreen(state, vm, Modifier.padding(padding), { id -> catalogSelectedNames = emptySet(); catalogTargetPlanId = id; catalogScreen = true }, { exerciseScreen = it })
-                "Люди" -> CoachScreen(
-                    state,
-                    vm,
-                    Modifier.padding(padding),
-                    showDemoProfile = context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0,
-                    openDemoProfile = { vm.createDemoProfile(); tab = "Главная" },
-                    openSettings = { tab = "Настройки" },
-                )
-                "История" -> HistoryScreen(state.history, state.settings.weightUnit, historyTarget, { historyTarget = null }, Modifier.padding(padding), state.activeProfile?.kind == ProfileKind.PERSONAL && state.trustedLinks.any { it.localProfileId == state.activeProfileId }, { retryDeliverySessionId = it }) { exerciseScreen = it }
-                "Прогресс" -> ProgressScreen(state, Modifier.padding(padding)) { id -> historyTarget = id; tab = "История" }
-                "Настройки" -> SettingsScreen(state, vm, Modifier.padding(padding), incomingUri, onIncomingConsumed)
-                else -> HomeScreen(state, vm, Modifier.padding(padding)) { tab = it }
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.widthIn(max = 600.dp).fillMaxSize()) {
+                    if (state.loading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    else if (exerciseScreen != null) ExerciseDetailScreen(exerciseScreen!!, state, vm, tick, Modifier.fillMaxSize(), onBack = { exerciseScreen = null }) { id -> historyTarget = id; tab = "История"; exerciseScreen = null; catalogScreen = false }
+                    else if (catalogScreen) ExerciseCatalogScreen(
+                        state,
+                        Modifier.fillMaxSize(),
+                        selectForPlan = catalogTargetPlanId != null,
+                        selectedNames = catalogSelectedNames,
+                        onSelectedNamesChange = { catalogSelectedNames = it },
+                        openExercise = { exerciseScreen = it },
+                        addSelected = { names -> names.forEach { vm.addExercise(catalogTargetPlanId!!, it) }; catalogSelectedNames = emptySet(); catalogTargetPlanId = null; catalogScreen = false },
+                    )
+                    else when (tab) {
+                        "Зал" -> GymScreen(state, vm, Modifier.fillMaxSize(), { confirm = it }, { catalogSelectedNames = emptySet(); catalogTargetPlanId = null; catalogScreen = true }) { exerciseScreen = it }
+                        "План" -> PlanScreen(state, vm, Modifier.fillMaxSize(), { id -> catalogSelectedNames = emptySet(); catalogTargetPlanId = id; catalogScreen = true }, { exerciseScreen = it })
+                        "Люди" -> CoachScreen(
+                            state,
+                            vm,
+                            Modifier.fillMaxSize(),
+                            showDemoProfile = context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0,
+                            openDemoProfile = { vm.createDemoProfile(); tab = "Главная" },
+                            openSettings = { tab = "Настройки" },
+                        )
+                        "История" -> HistoryScreen(state.history, state.settings.weightUnit, historyTarget, { historyTarget = null }, Modifier.fillMaxSize(), state.activeProfile?.kind == ProfileKind.PERSONAL && state.trustedLinks.any { it.localProfileId == state.activeProfileId }, { retryDeliverySessionId = it }) { exerciseScreen = it }
+                        "Прогресс" -> ProgressScreen(state, Modifier.fillMaxSize()) { id -> historyTarget = id; tab = "История" }
+                        "Настройки" -> SettingsScreen(state, vm, Modifier.fillMaxSize(), incomingUri, onIncomingConsumed)
+                        else -> HomeScreen(state, vm, Modifier.fillMaxSize()) { tab = it }
+                    }
+                    state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
+                }
             }
-            state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(12.dp)) }
         }
     }
 
@@ -324,12 +331,14 @@ private fun WorkoutBottomBar(
     skip: (String) -> Unit,
     finish: () -> Unit,
 ) {
-    val resting = session.exercises.asSequence().flatMap { it.sets.asSequence() }.firstOrNull { set ->
-        (set.restUntil ?: 0L) > System.currentTimeMillis() || set.restRemaining > 0L
-    }
+    val now = remember(tick) { System.currentTimeMillis() }
+    val sets = session.exercises.asSequence().flatMap { it.sets.asSequence() }.toList()
+    val resting = sets.firstOrNull { set -> (set.restUntil ?: 0L) > now || set.restRemaining > 0L }
+    val restJustFinished = resting == null && sets.mapNotNull { it.restUntil }
+        .filter { it <= now && now - it <= 5_000L }.maxOrNull() != null
     Column(Modifier.fillMaxWidth().background(LocalPalette.current.surface).navigationBarsPadding().imePadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (resting != null) {
-            val seconds = resting.restUntil?.let { ((it - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L) } ?: (resting.restRemaining / 1000L)
+            val seconds = resting.restUntil?.let { ((it - now) / 1000L).coerceAtLeast(0L) } ?: (resting.restRemaining / 1000L)
             Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Отдых  %02d:%02d".format(seconds / 60, seconds % 60), color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold)
                 Row {
@@ -337,7 +346,7 @@ private fun WorkoutBottomBar(
                     IconButton(onClick = { skip(resting.id) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Пропустить отдых" }) { NavigationGlyph(NavigationIcon.SKIP) }
                 }
             }
-        }
+        } else if (restJustFinished) Text("Отдых завершён", color = LocalPalette.current.secondary, fontWeight = FontWeight.SemiBold, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("rest-complete"))
         Button(onClick = finish, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("finish-workout")) { Text("Завершить тренировку") }
     }
 }
@@ -424,11 +433,11 @@ private fun ScreenTitle(title: String, subtitle: String) {
 private fun PrimaryActionButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, tag: String? = null, enabled: Boolean = true) {
     val brush = Brush.horizontalGradient(listOf(Color(0xFF8957F6), Color(0xFFB05AFF)))
     val taggedModifier = tag?.let { modifier.testTag(it) } ?: modifier
-    Button(onClick = onClick, modifier = taggedModifier.fillMaxWidth().heightIn(min = 50.dp), contentPadding = PaddingValues(0.dp), enabled = enabled, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White)) {
+    Button(onClick = onClick, modifier = taggedModifier.fillMaxWidth().heightIn(min = 50.dp), contentPadding = PaddingValues(0.dp), enabled = enabled, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.Black)) {
         Row(Modifier.fillMaxWidth().height(50.dp).background(brush, RoundedCornerShape(14.dp)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             NavigationGlyph(NavigationIcon.PLAY)
             Spacer(Modifier.width(8.dp))
-            Text(label, color = Color.White, fontWeight = FontWeight.Bold)
+            Text(label, color = Color.Black, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -459,7 +468,7 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(if (active != null) "ТРЕНИРОВКА В ПРОЦЕССЕ" else "СЛЕДУЮЩАЯ ТРЕНИРОВКА", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                         Text(active?.planName?.removePrefix("Демо · ") ?: next?.name?.removePrefix("Демо · ") ?: "Создай план", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
-                    Text(targetGroups.ifBlank { "${active?.exercises?.size ?: next?.exercises?.size ?: 0} упражнений · по плану" }, color = LocalPalette.current.muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(targetGroups.ifBlank { "Группы мышц не подтверждены" }, color = LocalPalette.current.muted, style = MaterialTheme.typography.bodyMedium)
                 }
                 HomeHeroArtwork(
                     modifier = Modifier.size(74.dp),
@@ -474,7 +483,7 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Цикл", color = LocalPalette.current.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("${cycle.size} тренировок", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+                    Text(russianCount(cycle.size, "тренировка", "тренировки", "тренировок"), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     cycle.forEach { plan ->
@@ -493,7 +502,7 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
                     Text("Последняя тренировка", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
                     state.history.firstOrNull()?.let { session ->
                         Text(session.planName.removePrefix("Демо · "), color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
-                        Text("${date(session.endedAt ?: session.startedAt)} · ${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов · макс. ${session.maxWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                        Text("${date(session.endedAt ?: session.startedAt)} · ${russianCount(session.exercises.size, "упражнение", "упражнения", "упражнений")} · ${russianCount(session.completedSets, "рабочий подход", "рабочих подхода", "рабочих подходов")} · макс. ${session.maxWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                     } ?: Text("История появится после первой тренировки", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
@@ -739,7 +748,7 @@ private fun ExerciseCatalogScreen(state: DiarySnapshot, modifier: Modifier, sele
 }
 
 @Composable
-private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, tick: Long, confirm: (String) -> Unit, openCatalog: () -> Unit, openExercise: (String) -> Unit) {
+private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, confirm: (String) -> Unit, openCatalog: () -> Unit, openExercise: (String) -> Unit) {
     val session = state.activeSession
     val scrollState = rememberScrollState()
     var viewportCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -747,6 +756,8 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
     val density = LocalDensity.current
     var replacementFor by remember { mutableStateOf<String?>(null) }
     var exerciseActionsFor by remember { mutableStateOf<String?>(null) }
+    var showCommentDialog by remember(session?.id) { mutableStateOf(false) }
+    var commentDraft by rememberSaveable(session?.id) { mutableStateOf(session?.comment.orEmpty()) }
     ScreenColumn(modifier, scrollState, { viewportCoordinates = it }) {
         if (session == null) ScreenTitle("Зал", "Отмечай фактические подходы")
         if (session == null) {
@@ -784,15 +795,15 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
             }
             OutlinedButton(onClick = openCatalog, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Открыть каталог упражнений") }
         } else {
-            val elapsed = ((System.currentTimeMillis() - session.startedAt) / 60000L).coerceAtLeast(0)
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Упражнения ${session.exercises.count { exercise -> exercise.skipped || exercise.sets.any { it.done } }}/${session.exercises.size}", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
                     Text("Подходы ${session.completedSets}/${session.totalSets}", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
                 }
                 LinearProgressIndicator(progress = { if (session.totalSets == 0) 0f else session.completedSets.toFloat() / session.totalSets }, modifier = Modifier.fillMaxWidth().height(4.dp), color = LocalPalette.current.accent, trackColor = LocalPalette.current.surface)
-                OutlinedTextField(value = session.comment, onValueChange = { vm.updateComment(session.id, it) }, modifier = Modifier.fillMaxWidth(), label = { Text("Комментарий") }, singleLine = true)
-                Text("${elapsed} мин", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelSmall)
+                TextButton(onClick = { commentDraft = session.comment; showCommentDialog = true }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(if (session.comment.isBlank()) "Комментарий" else "Комментарий: ${session.comment}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             session.exercises.forEach { exercise ->
                 var expanded by rememberSaveable(session.id, exercise.id) { mutableStateOf(exercise.position == 0) }
@@ -804,7 +815,7 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                                 Modifier.weight(1f).clickable { expanded = !expanded }.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalArrangement = Arrangement.spacedBy(2.dp),
                             ) {
-                                Text("${exercise.position + 1}. ${exercise.name}", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text("${exercise.position + 1}. ${exercise.name}", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text, maxLines = if (LocalConfiguration.current.screenWidthDp < 390) 3 else 2, overflow = TextOverflow.Ellipsis)
                                 Text(
                                     verifiedGuideFor(exercise.name)?.primaryMuscles?.joinToString(" · ") { it.compactLabel } ?: "Группа не указана",
                                     color = LocalPalette.current.muted,
@@ -883,9 +894,22 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                 }
             }
         }
-        if (session != null) Spacer(Modifier.height(96.dp))
+        if (session != null) Spacer(Modifier.height(136.dp))
         Spacer(Modifier.height(8.dp))
     }
+    if (session != null && showCommentDialog) AlertDialog(
+        onDismissRequest = { showCommentDialog = false },
+        title = { Text("Комментарий к тренировке") },
+        text = {
+            OutlinedTextField(
+                value = commentDraft,
+                onValueChange = { commentDraft = it; vm.updateComment(session.id, it) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Комментарий") },
+            )
+        },
+        confirmButton = { TextButton(onClick = { showCommentDialog = false }) { Text("Готово") } },
+    )
 }
 
 internal data class ExerciseGuide(
@@ -1366,7 +1390,7 @@ private fun ExercisePlanDialog(exercise: PlanExercise, unit: WeightUnit, onDismi
     AlertDialog(onDismissRequest = onDismiss, title = { Text("Параметры упражнения") }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedTextField(name, { name = it }, label = { Text("Упражнение") }, singleLine = true)
-            OutlinedTextField(sets, { sets = it.filter(Char::isDigit).take(2) }, label = { Text("Подходов в плане") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            OutlinedTextField(sets, { sets = it.filter(Char::isDigit).take(2) }, modifier = Modifier.testTag("plan-exercise-sets"), label = { Text("Подходов в плане") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(weight, { weight = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.take(8) }, label = { Text("Целевой вес, ${unit.label()}") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
             OutlinedTextField(reps, { reps = it.filter(Char::isDigit).take(4) }, label = { Text("Целевые повторы") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             OutlinedTextField(rest, { rest = it.filter(Char::isDigit).take(3) }, label = { Text("Отдых, секунд") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
@@ -1789,6 +1813,17 @@ private fun SessionHistoryCard(session: TrainingSession, unit: WeightUnit, canSe
     }
 }
 
+
+private fun russianCount(count: Int, one: String, few: String, many: String): String {
+    val remainder100 = count % 100
+    val form = when {
+        remainder100 in 11..14 -> many
+        count % 10 == 1 -> one
+        count % 10 in 2..4 -> few
+        else -> many
+    }
+    return "$count $form"
+}
 
 private fun date(epoch: Long): String = SimpleDateFormat("d MMM yyyy", Locale.forLanguageTag("ru")).format(Date(epoch))
 private fun kg(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')

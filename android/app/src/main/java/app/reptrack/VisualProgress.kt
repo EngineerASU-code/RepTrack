@@ -5,7 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,7 +24,9 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Dialog
@@ -100,15 +101,25 @@ fun ProgressScreen(
                     Column(Modifier.weight(1f)) {
                         Text(exercise ?: "Упражнение", color = palette.text, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         Text(if (exercise != null) "История завершённых подходов" else "Нет записей с нагрузкой", color = palette.muted, style = MaterialTheme.typography.bodyMedium)
+                        exercise?.let { name ->
+                            val muscles = verifiedGuideFor(name)?.primaryMuscles.orEmpty()
+                            Text(
+                                muscles.takeIf { it.isNotEmpty() }?.joinToString(" · ") { "Основная группа · ${it.compactLabel}" }
+                                    ?: "Основная группа не подтверждена",
+                                color = palette.secondary,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                     DownChevron(Modifier.padding(horizontal = 6.dp))
                 }
             }
         if (showExercises) Dialog(onDismissRequest = { showExercises = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Surface(Modifier.fillMaxSize(), color = palette.background) {
-                Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Column(Modifier.widthIn(max = 600.dp).fillMaxHeight().fillMaxWidth().statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { showExercises = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Назад", color = palette.accent) }
+                        TextButton(onClick = { showExercises = false }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Назад", color = palette.secondary) }
                         Text("Упражнение", color = palette.text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     }
                     OutlinedTextField(exerciseQuery, { exerciseQuery = it }, Modifier.fillMaxWidth(), label = { Text("Поиск упражнения") }, singleLine = true)
@@ -120,11 +131,12 @@ fun ProgressScreen(
                                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     ExerciseArtwork(name, Modifier.size(52.dp))
                                     Text(name, Modifier.weight(1f), color = palette.text, fontWeight = FontWeight.SemiBold)
-                                    if (name == exercise) Text("Выбрано", color = palette.accent, style = MaterialTheme.typography.labelMedium)
+                                    if (name == exercise) Text("Выбрано", color = palette.secondary, style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -143,7 +155,7 @@ fun ProgressScreen(
                             Text(metric.cardTitle(), color = palette.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                             IconButton(onClick = { showMetricInfo = true }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Информация о показателе ${metric.cardTitle()}" }) { InfoGlyph() }
                         }
-                        Text("${metrics.sessions} тренировок · ${metrics.completedWorkingSets} рабочих подходов", color = palette.muted, style = MaterialTheme.typography.bodySmall)
+                        Text("${metrics.sessions} ${trainingCountWord(metrics.sessions)} · ${metrics.completedWorkingSets} рабочих подходов", color = palette.muted, style = MaterialTheme.typography.bodySmall)
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(selected?.let { it.value.display(metric, state.settings.weightUnit) } ?: "—", color = palette.accent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -158,7 +170,7 @@ fun ProgressScreen(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("${dateLong(point.timestamp)} · ${point.value.display(metric, state.settings.weightUnit)}", color = palette.muted, style = MaterialTheme.typography.bodySmall)
                             TextButton(onClick = { openSession(point.sessionId) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.heightIn(min = 48.dp)) {
-                                Text("Тренировка", color = palette.accent)
+                                Text("Тренировка", color = palette.secondary)
                                 Spacer(Modifier.width(4.dp)); RightChevron()
                             }
                         }
@@ -216,23 +228,26 @@ fun ProgressScreen(
 @Composable
 private fun ProgressPeriodSelector(selected: ProgressPeriod, onSelect: (ProgressPeriod) -> Unit) {
     val palette = LocalPalette.current
-    Row(
+    Column(
         Modifier.fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
             .background(palette.background.copy(alpha = .7f), RoundedCornerShape(14.dp))
             .padding(3.dp)
             .testTag("progress-periods"),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        ProgressPeriod.entries.forEach { option ->
-            val active = option == selected
-            Box(
-                Modifier.defaultMinSize(minWidth = 76.dp).heightIn(min = 48.dp)
-                    .background(if (active) palette.accent else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(12.dp))
-                    .selectable(selected = active, role = Role.RadioButton) { onSelect(option) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(option.label, Modifier.padding(horizontal = 10.dp, vertical = 8.dp), color = if (active) MaterialTheme.colorScheme.onPrimary else palette.muted, style = MaterialTheme.typography.labelMedium)
+        ProgressPeriod.entries.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                row.forEach { option ->
+                    val active = option == selected
+                    Box(
+                        Modifier.weight(1f).heightIn(min = 48.dp)
+                            .background(if (active) palette.accent else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(12.dp))
+                            .selectable(selected = active, role = Role.RadioButton) { onSelect(option) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(option.label, Modifier.padding(horizontal = 8.dp, vertical = 8.dp), color = if (active) MaterialTheme.colorScheme.onPrimary else palette.muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    }
+                }
             }
         }
     }
@@ -248,6 +263,23 @@ private fun ProgressChart(points: List<ProgressPoint>, selectedId: String?, metr
     val maxValue = (high + padding).coerceAtLeast(minValue + 1.0)
     val ticks = (0..4).map { maxValue - (maxValue - minValue) * it / 4 }
     val selectedIndex = points.indexOfFirst { it.sessionId == selectedId }.let { if (it < 0) points.lastIndex else it }
+    val selectedPoint = points[selectedIndex]
+    val chartActions = buildList {
+        if (selectedIndex > 0) {
+            val previous = points[selectedIndex - 1]
+            add(CustomAccessibilityAction("Предыдущая точка: ${dateLong(previous.timestamp)}, ${previous.value.display(metric, unit)}") {
+                onSelect(previous.sessionId)
+                true
+            })
+        }
+        if (selectedIndex < points.lastIndex) {
+            val next = points[selectedIndex + 1]
+            add(CustomAccessibilityAction("Следующая точка: ${dateLong(next.timestamp)}, ${next.value.display(metric, unit)}") {
+                onSelect(next.sessionId)
+                true
+            })
+        }
+    }
     val coordinates = points.mapIndexed { index, point ->
         val xFraction = if (points.size == 1 || points.last().timestamp == points.first().timestamp) .5f else ((point.timestamp - points.first().timestamp).toDouble() / (points.last().timestamp - points.first().timestamp)).toFloat()
         Offset(xFraction, (1.0 - (point.value - minValue) / (maxValue - minValue)).toFloat())
@@ -276,7 +308,10 @@ private fun ProgressChart(points: List<ProgressPoint>, selectedId: String?, metr
                         }
                     } while (event.changes.any { it.pressed })
                 }
-            }.semantics { contentDescription = chartDescription(points, metric, unit) }) {
+            }.semantics {
+                contentDescription = chartDescription(points, selectedIndex, selectedPoint, metric, unit)
+                customActions = chartActions
+            }) {
                 val top = 6.dp.toPx(); val bottom = size.height - 6.dp.toPx()
                 val chartHeight = (bottom - top).coerceAtLeast(1f)
                 if (showAxes) for (i in 0..4) {
@@ -395,11 +430,18 @@ private fun ProgressHistoryCard(session: TrainingSession, exercise: String, metr
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(dateLong(session.endedAt ?: session.startedAt), color = palette.text, fontWeight = FontWeight.Bold)
-                Text(sets.joinToString("   ") { "${displayLoad(it.weight, unit)}×${it.reps}" }.ifBlank { "Нет рабочих подходов" }, color = palette.muted, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                Text(
+                    sets.joinToString("   ") { "${displayLoad(it.weight, unit)}×${it.reps}" }
+                        .takeIf { it.isNotBlank() }?.let { "Подходы · $it" } ?: "Нет рабочих подходов",
+                    color = palette.muted,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                )
             }
             Column(horizontalAlignment = Alignment.End) {
+                Text(metric.label(), color = palette.muted, style = MaterialTheme.typography.labelSmall)
                 Text(sessionValue?.display(metric, unit) ?: "—", color = palette.text, fontWeight = FontWeight.Bold)
-                Text(session.planName, color = palette.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                Text(session.planName, color = palette.muted, style = MaterialTheme.typography.labelSmall, maxLines = 2)
             }
             RightChevron()
         }
@@ -442,9 +484,20 @@ private fun changeLabel(change: Double, base: Double, metric: ProgressMetric, un
     val sign = if (change > 0) "+" else ""
     return "$sign${change.display(metric, unit)} · ${if (percent > 0) "+" else ""}${String.format(Locale.US, "%.1f%%", percent)}"
 }
-private fun chartDescription(points: List<ProgressPoint>, metric: ProgressMetric, unit: WeightUnit) = buildString {
-    append("График ${metric.cardTitle()}. ${points.size} тренировок. ")
-    points.takeLast(12).forEach { append("${dateLong(it.timestamp)}: ${it.value.display(metric, unit)}. ") }
+private fun chartDescription(points: List<ProgressPoint>, selectedIndex: Int, selected: ProgressPoint, metric: ProgressMetric, unit: WeightUnit) = buildString {
+    append("График ${metric.cardTitle()}. ${points.size} ${trainingCountWord(points.size)}. ")
+    append("Выбрана точка ${selectedIndex + 1} из ${points.size}: ${dateLong(selected.timestamp)}, ${selected.value.display(metric, unit)}. Значения: ")
+    points.forEachIndexed { index, point ->
+        append("${index + 1}: ${dateLong(point.timestamp)}, ${point.value.display(metric, unit)}. ")
+    }
+    if (points.size > 1) append("Для перехода по значениям используйте действия «Предыдущая точка» и «Следующая точка».")
+}
+
+private fun trainingCountWord(count: Int): String = when {
+    count % 100 in 11..14 -> "тренировок"
+    count % 10 == 1 -> "тренировка"
+    count % 10 in 2..4 -> "тренировки"
+    else -> "тренировок"
 }
 
 @Composable

@@ -3,6 +3,7 @@ package app.reptrack
 import android.graphics.Bitmap
 import android.database.sqlite.SQLiteDatabase
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
@@ -41,6 +42,8 @@ class VisualAcceptanceTest {
                 allProgressBounds.width >= minButtonWidth,
             )
             capture("C01-home")
+            compose.onNodeWithTag("home-progress-all").performScrollTo().assertIsDisplayed()
+            capture("C01-home-bottom")
             listOf("gym", "plan", "progress", "history").forEach { route ->
                 compose.onNodeWithTag("nav-$route").performClick()
                 compose.waitForIdle()
@@ -51,12 +54,24 @@ class VisualAcceptanceTest {
                     compose.onNodeWithText("Изменить").performClick()
                     compose.onNodeWithText("Подходов в плане").assertIsDisplayed()
                     capture("C09-plan-editor")
+                    val plannedSets = repository.load().nextPlan?.exercises?.firstOrNull()?.plannedSets
+                        ?: error("Demo plan has no exercise to edit")
+                    val draftSets = plannedSets % 9 + 1
+                    compose.onNodeWithTag("plan-exercise-sets").performTextClearance()
+                    compose.onNodeWithTag("plan-exercise-sets").performTextInput(draftSets.toString())
+                    val editedSets = compose.onNodeWithTag("plan-exercise-sets").fetchSemanticsNode()
+                        .config[SemanticsProperties.EditableText].text
+                    org.junit.Assert.assertEquals(draftSets.toString(), editedSets)
+                    capture("C09-plan-editor-draft")
                     compose.onNodeWithText("Назад").performClick()
                 }
                 if (route == "progress") {
+                    compose.onNodeWithText("1 мес.").assertIsSelected()
                     compose.onNodeWithTag("progress-chart").performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText("Подходы:", substring = true).assertExists()
                     capture("C11-chart")
                     compose.onNodeWithText("История тренировок").performScrollTo().assertIsDisplayed()
+                    compose.onAllNodes(hasText("×", substring = true)).onLast().performScrollTo().assertIsDisplayed()
                     capture("C11-chart-bottom")
                 }
             }
@@ -124,6 +139,14 @@ class VisualAcceptanceTest {
                     compose.onNodeWithText("Большая грудная мышца").assertIsDisplayed()
                     compose.onNodeWithText("Мышцы: Free Exercise DB · Barbell Bench Press - Medium Grip").assertExists()
                     compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").assertExists()
+                    capture("C07-muscles")
+                    compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").performScrollTo().assertIsDisplayed()
+                    capture("C07-muscles-bottom")
+                }
+                if (section == "sets") {
+                    capture("C05-approaches")
+                    compose.onNodeWithText("Добавить подход").performScrollTo().assertIsDisplayed()
+                    capture("C05-approaches-bottom")
                 }
                 if (section != "technique") capture("exercise-$section")
             }
