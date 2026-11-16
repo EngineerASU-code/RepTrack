@@ -1,0 +1,10 @@
+Android=35
+viewport=360x800dp
+density=3.0
+fontScale=1.0
+theme=LIME_ENERGY
+profile=isolated demo
+variant=debug
+commit=ed1966065afd3dffb9aaa93de515ea5ea44a74e9
+worktree=verified-ed19660
+capture=MainActivity Compose and full device display
