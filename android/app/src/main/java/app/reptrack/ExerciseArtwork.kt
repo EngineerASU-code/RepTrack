@@ -99,12 +99,22 @@ private fun exercisePhotos(name: String): List<Int> = when (
         listOf(R.drawable.exercise_art_lat_pulldown)
     "приседания со штангой", "barbell squat" ->
         listOf(R.drawable.exercise_art_barbell_squat)
-    "жим ногами", "leg press (machine)" ->
+    "жим ногами", "жим ногами в тренажёре", "leg press (machine)" ->
         listOf(R.drawable.exercise_art_leg_press)
     "тяга нижнего блока узким хватом", "seated cable rows" ->
         listOf(R.drawable.exercise_art_seated_cable_row)
-    "попеременные молотки с гантелями", "alternate hammer curl (dumbbells, alternating)" ->
+    "попеременные молотки с гантелями", "молотки с гантелями", "alternate hammer curl (dumbbells, alternating)" ->
         listOf(R.drawable.exercise_art_hammer_curl)
+    "плечи стоя, задняя дельта", "задняя дельта, канаты" -> listOf(R.drawable.exercise_art_standing_rear_delt_cable_fly)
+    "бицепс скотт (суперсет)", "бицепс на скамье скотта" -> listOf(R.drawable.exercise_art_preacher_curl)
+    "беговая дорожка" -> listOf(R.drawable.exercise_art_incline_treadmill_walk)
+    "сгибания ног в тренажёре" -> listOf(R.drawable.exercise_art_seated_leg_curl)
+    "разгибания ног в тренажёре" -> listOf(R.drawable.exercise_art_leg_extension)
+    "подъём на носки стоя" -> listOf(R.drawable.exercise_art_standing_calf_raise)
+    "тяга спины hammer", "тяга спина (хаммер)" -> listOf(R.drawable.exercise_art_hammer_row)
+    "армейский жим (смит)" -> listOf(R.drawable.exercise_art_smith_shoulder_press)
+    "разводка груди butterfly" -> listOf(R.drawable.exercise_art_pec_deck_fly)
+    "бицепс стоя со штангой" -> listOf(R.drawable.exercise_art_standing_barbell_curl)
     else -> emptyList()
 }
 

@@ -120,7 +120,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
     val state by vm.snapshot.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var tab by remember { mutableStateOf("Главная") }
+    var tab by rememberSaveable { mutableStateOf("Главная") }
     var confirm by remember { mutableStateOf<String?>(null) }
     var historyTarget by remember { mutableStateOf<String?>(null) }
     var exerciseScreen by rememberSaveable { mutableStateOf<String?>(null) }
@@ -172,9 +172,9 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                     }
                 },
                 navigationIcon = {
-                    if (exerciseScreen != null) IconButton(onClick = { exerciseScreen = null }, modifier = Modifier.testTag("exercise-back")) { NavigationGlyph(NavigationIcon.BACK) }
-                    else if (catalogScreen) IconButton(onClick = { catalogScreen = false }, modifier = Modifier.testTag("catalog-back")) { NavigationGlyph(NavigationIcon.BACK) }
-                    else if (workoutOpen) IconButton(onClick = { tab = "Главная" }) { NavigationGlyph(NavigationIcon.BACK) }
+                    if (exerciseScreen != null) IconButton(onClick = { exerciseScreen = null }, modifier = Modifier.semantics { contentDescription = "Назад" }.testTag("exercise-back")) { NavigationGlyph(NavigationIcon.BACK) }
+                    else if (catalogScreen) IconButton(onClick = { catalogScreen = false }, modifier = Modifier.semantics { contentDescription = "Назад" }.testTag("catalog-back")) { NavigationGlyph(NavigationIcon.BACK) }
+                    else if (workoutOpen) IconButton(onClick = { tab = "Главная" }, modifier = Modifier.semantics { contentDescription = "Назад" }) { NavigationGlyph(NavigationIcon.BACK) }
                 },
                 actions = {
                     if (!workoutOpen && exerciseScreen == null && !catalogScreen) {
@@ -192,13 +192,15 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text),
             ) },
             bottomBar = {
-                if (showBottomNavigation) Row(Modifier.fillMaxWidth().background(LocalPalette.current.background).padding(horizontal = 4.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    tabs.forEachIndexed { index, item ->
+                if (showBottomNavigation) {
+                    val navigationModifier = Modifier.fillMaxWidth().background(LocalPalette.current.background).navigationBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp)
+                    val largeFont = LocalDensity.current.fontScale >= 1.5f
+                    val navigationItem: @Composable (Int, Modifier) -> Unit = { index, itemModifier ->
+                        val item = tabs[index]
                         val selected = tab == item
                         val tag = listOf("home", "gym", "plan", "progress", "history")[index]
-                        val compactNavigation = LocalDensity.current.fontScale >= 1.5f
                         Column(
-                            Modifier.weight(1f).heightIn(min = 56.dp)
+                            itemModifier.heightIn(min = 56.dp)
                                 .semantics { contentDescription = item; this.selected = selected }
                                 .clickable { tab = item }
                                 .testTag("nav-$tag")
@@ -209,8 +211,14 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                             Box(Modifier.size(30.dp).background(if (selected) LocalPalette.current.accent.copy(alpha = .18f) else Color.Transparent, CircleShape), contentAlignment = Alignment.Center) {
                                 CompositionLocalProvider(LocalContentColor provides if (selected) LocalPalette.current.secondary else LocalPalette.current.muted) { NavigationGlyph(tabIcons[index]) }
                             }
-                            if (!compactNavigation) Text(item, color = if (selected) LocalPalette.current.secondary else LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            Text(item, color = if (selected) LocalPalette.current.secondary else LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall, maxLines = 2, modifier = Modifier.testTag("nav-label-$tag"))
                         }
+                    }
+                    if (largeFont) Column(navigationModifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Row(Modifier.fillMaxWidth()) { (0..2).forEach { navigationItem(it, Modifier.weight(1f)) } }
+                        Row(Modifier.fillMaxWidth()) { (3..4).forEach { navigationItem(it, Modifier.weight(1f)) } }
+                    } else Row(navigationModifier, horizontalArrangement = Arrangement.SpaceEvenly) {
+                        tabs.indices.forEach { navigationItem(it, Modifier.weight(1f)) }
                     }
                 } else state.activeSession?.let { WorkoutBottomBar(it, tick, pause = vm::pauseRest, resume = vm::resumeRest, skip = vm::skipRest) { confirm = "finish" } }
             },
@@ -843,11 +851,14 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                         TextButton(onClick = { openExercise(exercise.name) }, modifier = Modifier.heightIn(min = 48.dp).testTag("exercise-details")) { Text("Открыть упражнение") }
                         if (exercise.skipped) Text("Упражнение пропущено", color = LocalPalette.current.muted)
                         else {
-                            Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (LocalDensity.current.fontScale < 1.3f) Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("№", Modifier.width(48.dp), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
                                 Text("Вес, ${state.settings.weightUnit.label()}", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
                                 Text("Повторы", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
                                 Spacer(Modifier.width(48.dp)); Spacer(Modifier.width(48.dp))
+                            } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Вес, ${state.settings.weightUnit.label()}", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                Text("Повторы", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
                             }
                             exercise.sets.forEachIndexed { index, set -> SetEditor(index, set, vm, exercise.tracksLoad, state.settings.weightUnit) { row ->
                                 scrollScope.launch {
@@ -1019,8 +1030,9 @@ private fun ExerciseDetailScreen(name: String, state: DiarySnapshot, vm: DiaryVi
                     when (selectedTab) {
                         0 -> {
                             ExerciseArtwork(name, Modifier.fillMaxWidth().height(190.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Card(Modifier.weight(1f).clickable(enabled = related.isNotEmpty()) { related.firstOrNull()?.first?.id?.let(openSession) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                            val stackSummaryCards = largeFont || LocalConfiguration.current.screenWidthDp <= 400
+                            val previousWorkoutCard: @Composable (Modifier) -> Unit = { cardModifier ->
+                                Card(cardModifier.clickable(enabled = related.isNotEmpty()) { related.firstOrNull()?.first?.id?.let(openSession) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text("Прошлый раз", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
                                         val (session, item) = related.firstOrNull() ?: (null to null)
@@ -1028,13 +1040,22 @@ private fun ExerciseDetailScreen(name: String, state: DiarySnapshot, vm: DiaryVi
                                         Text(item?.sets?.filter { it.done && !it.skipped && it.kind == SetKind.WORK }?.joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit)}×${it.reps}" } ?: "", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
-                                Card(Modifier.weight(1f).clickable(enabled = recordEntry != null) { recordEntry?.second?.let(openSession) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                            }
+                            val personalRecordCard: @Composable (Modifier) -> Unit = { cardModifier ->
+                                Card(cardModifier.clickable(enabled = recordEntry != null) { recordEntry?.second?.let(openSession) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                                     Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text("Личный рекорд", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
                                         Text(record?.let { formatWeight(it, state.settings.weightUnit) } ?: "—", color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
                                         Text("по завершённым подходам", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
+                            }
+                            if (stackSummaryCards) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                previousWorkoutCard(Modifier.fillMaxWidth())
+                                personalRecordCard(Modifier.fillMaxWidth())
+                            } else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                previousWorkoutCard(Modifier.weight(1f))
+                                personalRecordCard(Modifier.weight(1f))
                             }
                             if (activeExercise != null) {
                                 Text("Текущие подходы", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
@@ -1166,22 +1187,46 @@ private fun SetEditor(
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
     var rowCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     val focusCallback: (() -> Unit)? = onFieldFocused?.let { callback -> { rowCoordinates?.let(callback) } }
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).bringIntoViewRequester(bringIntoViewRequester).onGloballyPositioned { rowCoordinates = it }.testTag("workout-set-row").background(if (index % 2 == 0) LocalPalette.current.background.copy(alpha = .45f) else Color.Transparent, MaterialTheme.shapes.small), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    val largeFont = LocalDensity.current.fontScale >= 1.3f
+    val rowModifier = Modifier.fillMaxWidth().bringIntoViewRequester(bringIntoViewRequester).onGloballyPositioned { rowCoordinates = it }.testTag("workout-set-row").background(if (index % 2 == 0) LocalPalette.current.background.copy(alpha = .45f) else Color.Transparent, MaterialTheme.shapes.small)
+    val setNumber: @Composable () -> Unit = {
         Row(Modifier.width(48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             Text("${index + 1}", color = LocalPalette.current.text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             if (set.kind == SetKind.WARMUP) Text("Р", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
         }
-        if (tracksLoad) {
-            CompactNumberField(weight, "Вес ${unit.label()}", Modifier.weight(1f), KeyboardType.Decimal, bringIntoViewRequester, focusCallback) { weight = it; vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }
-            CompactNumberField(reps, "Повторы", Modifier.weight(1f), KeyboardType.Number, bringIntoViewRequester, focusCallback) { reps = it; vm.updateSet(set.id, reps = reps) }
-        } else Text("—", Modifier.weight(2f), color = LocalPalette.current.muted)
+    }
+    val setActions: @Composable () -> Unit = {
         Checkbox(checked = set.done, onCheckedChange = { vm.toggleSet(set) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Отметить подход ${index + 1}" })
         Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp)) { NavigationGlyph(NavigationIcon.MORE) }
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Действия для подхода ${index + 1}" }) { NavigationGlyph(NavigationIcon.MORE) }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(if (set.kind == SetKind.WORK) "Отметить разминкой" else "Отметить рабочим") }, onClick = { vm.setKind(set.id, if (set.kind == SetKind.WORK) SetKind.WARMUP else SetKind.WORK); menu = false })
                 DropdownMenuItem(text = { Text("Удалить подход") }, onClick = { vm.removeSet(set.id); menu = false })
             }
+        }
+    }
+    val setFields: @Composable RowScope.() -> Unit = {
+        if (tracksLoad) {
+            CompactNumberField(weight, "Вес ${unit.label()}", Modifier.weight(1f), KeyboardType.Decimal, bringIntoViewRequester, focusCallback) { weight = it; vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }
+            CompactNumberField(reps, "Повторы", Modifier.weight(1f), KeyboardType.Number, bringIntoViewRequester, focusCallback) { reps = it; vm.updateSet(set.id, reps = reps) }
+        } else Text("—", Modifier.weight(2f), color = LocalPalette.current.muted)
+    }
+    if (largeFont && tracksLoad) {
+        Column(rowModifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                setNumber()
+                Spacer(Modifier.weight(1f))
+                setActions()
+            }
+            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                setFields()
+            }
+        }
+    } else {
+        Row(rowModifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            setNumber()
+            setFields()
+            setActions()
         }
     }
 }
@@ -1189,7 +1234,7 @@ private fun SetEditor(
 @Composable
 private fun CompactNumberField(value: String, label: String, modifier: Modifier, keyboardType: KeyboardType, bringIntoViewRequester: BringIntoViewRequester, onFocused: (() -> Unit)?, onValueChange: (String) -> Unit) {
     val scope = rememberCoroutineScope()
-    Surface(modifier.heightIn(min = 40.dp), shape = MaterialTheme.shapes.small, color = LocalPalette.current.background, border = BorderStroke(1.dp, LocalPalette.current.muted.copy(alpha = .25f))) {
+    Surface(modifier.heightIn(min = 48.dp), shape = MaterialTheme.shapes.small, color = LocalPalette.current.background, border = BorderStroke(1.dp, LocalPalette.current.muted.copy(alpha = .25f))) {
         Box(contentAlignment = Alignment.Center) {
             if (value.isEmpty()) Text(label, color = LocalPalette.current.muted.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
             BasicTextField(
@@ -1246,7 +1291,7 @@ private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
                         Column(Modifier.weight(1f)) { Text(plan.name.removePrefix("Демо · "), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text(if (plan.inCycle) "${cyclePositions[plan.id]} · в цикле" else "Вне цикла", color = LocalPalette.current.muted) }
                         Box {
                             var menu by remember(plan.id) { mutableStateOf(false) }
-                            IconButton(onClick = { menu = true }) { NavigationGlyph(NavigationIcon.MORE) }
+                            IconButton(onClick = { menu = true }, modifier = Modifier.semantics { contentDescription = "Действия плана ${plan.name.removePrefix("Демо · ")}" }) { NavigationGlyph(NavigationIcon.MORE) }
                             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(text = { Text("Поднять в цикле") }, onClick = { vm.movePlan(plan.id, -1); menu = false })
                                 DropdownMenuItem(text = { Text("Опустить в цикле") }, onClick = { vm.movePlan(plan.id, 1); menu = false })
