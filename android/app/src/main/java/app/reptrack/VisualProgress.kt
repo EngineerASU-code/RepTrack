@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -215,16 +216,23 @@ fun ProgressScreen(
 @Composable
 private fun ProgressPeriodSelector(selected: ProgressPeriod, onSelect: (ProgressPeriod) -> Unit) {
     val palette = LocalPalette.current
-    Row(Modifier.fillMaxWidth().background(palette.background.copy(alpha = .7f), RoundedCornerShape(14.dp)).padding(3.dp)) {
+    Row(
+        Modifier.fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .background(palette.background.copy(alpha = .7f), RoundedCornerShape(14.dp))
+            .padding(3.dp)
+            .testTag("progress-periods"),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         ProgressPeriod.entries.forEach { option ->
             val active = option == selected
             Box(
-                Modifier.weight(1f).heightIn(min = 48.dp)
+                Modifier.defaultMinSize(minWidth = 76.dp).heightIn(min = 48.dp)
                     .background(if (active) palette.accent else androidx.compose.ui.graphics.Color.Transparent, RoundedCornerShape(12.dp))
                     .selectable(selected = active, role = Role.RadioButton) { onSelect(option) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(option.label, color = if (active) MaterialTheme.colorScheme.onPrimary else palette.muted, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                Text(option.label, Modifier.padding(horizontal = 10.dp, vertical = 8.dp), color = if (active) MaterialTheme.colorScheme.onPrimary else palette.muted, style = MaterialTheme.typography.labelMedium)
             }
         }
     }

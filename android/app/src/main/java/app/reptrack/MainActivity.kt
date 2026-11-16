@@ -24,6 +24,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -33,6 +35,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
@@ -117,6 +120,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
     var exerciseScreen by rememberSaveable { mutableStateOf<String?>(null) }
     var catalogScreen by rememberSaveable { mutableStateOf(false) }
     var catalogTargetPlanId by rememberSaveable { mutableStateOf<String?>(null) }
+    var catalogSelectedNames by rememberSaveable { mutableStateOf(emptySet<String>()) }
     var retryDeliverySessionId by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableLongStateOf(0L) }
     fun shareTelegramDelivery(bytes: ByteArray) {
@@ -143,7 +147,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
             containerColor = LocalPalette.current.background,
             topBar = { TopAppBar(
                 title = {
-                    if (exerciseScreen != null) Text(exerciseScreen.orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1)
+                    if (exerciseScreen != null) Text(exerciseScreen.orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     else if (catalogScreen) Text("Каталог упражнений", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
                     else if (workoutOpen) Column {
                         Text(state.activeSession?.planName?.removePrefix("Демо · ").orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -157,7 +161,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                 },
                 navigationIcon = {
                     if (exerciseScreen != null) IconButton(onClick = { exerciseScreen = null }, modifier = Modifier.testTag("exercise-back")) { NavigationGlyph(NavigationIcon.BACK) }
-                    else if (catalogScreen) IconButton(onClick = { catalogScreen = false }) { NavigationGlyph(NavigationIcon.BACK) }
+                    else if (catalogScreen) IconButton(onClick = { catalogScreen = false }, modifier = Modifier.testTag("catalog-back")) { NavigationGlyph(NavigationIcon.BACK) }
                     else if (workoutOpen) IconButton(onClick = { tab = "Главная" }) { NavigationGlyph(NavigationIcon.BACK) }
                 },
                 actions = {
@@ -191,17 +195,19 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
             },
         ) { padding ->
             if (state.loading) Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            else if (exerciseScreen != null) ExerciseDetailScreen(exerciseScreen!!, state, vm, tick, Modifier.padding(padding), onBack = { exerciseScreen = null }) { id -> historyTarget = id; tab = "История"; exerciseScreen = null }
+            else if (exerciseScreen != null) ExerciseDetailScreen(exerciseScreen!!, state, vm, tick, Modifier.padding(padding), onBack = { exerciseScreen = null }) { id -> historyTarget = id; tab = "История"; exerciseScreen = null; catalogScreen = false }
             else if (catalogScreen) ExerciseCatalogScreen(
                 state,
                 Modifier.padding(padding),
                 selectForPlan = catalogTargetPlanId != null,
-                openExercise = { exerciseScreen = it; catalogScreen = false },
-                addSelected = { names -> names.forEach { vm.addExercise(catalogTargetPlanId!!, it) }; catalogTargetPlanId = null; catalogScreen = false },
+                selectedNames = catalogSelectedNames,
+                onSelectedNamesChange = { catalogSelectedNames = it },
+                openExercise = { exerciseScreen = it },
+                addSelected = { names -> names.forEach { vm.addExercise(catalogTargetPlanId!!, it) }; catalogSelectedNames = emptySet(); catalogTargetPlanId = null; catalogScreen = false },
             )
             else when (tab) {
-                "Зал" -> GymScreen(state, vm, Modifier.padding(padding), tick, { confirm = it }, { catalogTargetPlanId = null; catalogScreen = true }) { exerciseScreen = it }
-                "План" -> PlanScreen(state, vm, Modifier.padding(padding), { id -> catalogTargetPlanId = id; catalogScreen = true }, { exerciseScreen = it })
+                "Зал" -> GymScreen(state, vm, Modifier.padding(padding), tick, { confirm = it }, { catalogSelectedNames = emptySet(); catalogTargetPlanId = null; catalogScreen = true }) { exerciseScreen = it }
+                "План" -> PlanScreen(state, vm, Modifier.padding(padding), { id -> catalogSelectedNames = emptySet(); catalogTargetPlanId = id; catalogScreen = true }, { exerciseScreen = it })
                 "Люди" -> CoachScreen(
                     state,
                     vm,
@@ -292,7 +298,7 @@ private fun WorkoutBottomBar(
     val resting = session.exercises.asSequence().flatMap { it.sets.asSequence() }.firstOrNull { set ->
         (set.restUntil ?: 0L) > System.currentTimeMillis() || set.restRemaining > 0L
     }
-    Column(Modifier.fillMaxWidth().background(LocalPalette.current.surface).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.fillMaxWidth().background(LocalPalette.current.surface).navigationBarsPadding().imePadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (resting != null) {
             val seconds = resting.restUntil?.let { ((it - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L) } ?: (resting.restRemaining / 1000L)
             Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -602,33 +608,67 @@ private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modi
 private fun planDiffSummary(current: TrainingPlan, incoming: TrainingPlan): List<String> = describePlanChanges(current, incoming)
 
 @Composable
-private fun ExerciseCatalogScreen(state: DiarySnapshot, modifier: Modifier, selectForPlan: Boolean, openExercise: (String) -> Unit, addSelected: (List<String>) -> Unit) {
+private fun ExerciseCatalogScreen(state: DiarySnapshot, modifier: Modifier, selectForPlan: Boolean, selectedNames: Set<String>, onSelectedNamesChange: (Set<String>) -> Unit, openExercise: (String) -> Unit, addSelected: (List<String>) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var verifiedOnly by rememberSaveable { mutableStateOf(false) }
-    var selectedNames by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    var selectedGroup by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedEquipment by rememberSaveable { mutableStateOf<String?>(null) }
+    var groupMenu by remember { mutableStateOf(false) }
+    var equipmentMenu by remember { mutableStateOf(false) }
     val allNames = remember(state.plans, state.history) {
         (state.plans.flatMap { it.exercises }.map { it.name } + state.history.flatMap { it.exercises }.map { it.name }).distinct().sorted()
     }
-    val names = allNames.filter { it.contains(query.trim(), ignoreCase = true) && (!verifiedOnly || verifiedGuideFor(it) != null) }
+    val guides = allNames.associateWith(::verifiedGuideFor)
+    val groups = guides.values.filterNotNull().flatMap { it.primaryMuscles }.distinct().sortedBy { it.compactLabel }
+    val equipment = guides.values.filterNotNull().map { it.equipment }.distinct().sorted()
+    val names = allNames.filter { name ->
+        val guide = guides[name]
+        name.contains(query.trim(), ignoreCase = true) &&
+            (!verifiedOnly || guide != null) &&
+            (selectedGroup == null || guide?.primaryMuscles?.any { it.compactLabel == selectedGroup } == true) &&
+            (selectedEquipment == null || guide?.equipment == selectedEquipment)
+    }
     Column(modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Поиск упражнения") }, singleLine = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = !verifiedOnly, onClick = { verifiedOnly = false }, label = { Text("Все") })
             FilterChip(selected = verifiedOnly, onClick = { verifiedOnly = true }, label = { Text("С проверенной техникой") })
         }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                FilterChip(selected = selectedGroup != null, onClick = { groupMenu = true }, label = { Text(selectedGroup ?: "Группа") })
+                DropdownMenu(expanded = groupMenu, onDismissRequest = { groupMenu = false }) {
+                    DropdownMenuItem(text = { Text("Все группы") }, onClick = { selectedGroup = null; groupMenu = false })
+                    groups.forEach { group -> DropdownMenuItem(text = { Text(group.compactLabel) }, onClick = { selectedGroup = group.compactLabel; groupMenu = false }) }
+                }
+            }
+            Box {
+                FilterChip(selected = selectedEquipment != null, onClick = { equipmentMenu = true }, label = { Text(selectedEquipment ?: "Оборудование", maxLines = 1, overflow = TextOverflow.Ellipsis) })
+                DropdownMenu(expanded = equipmentMenu, onDismissRequest = { equipmentMenu = false }) {
+                    DropdownMenuItem(text = { Text("Любое оборудование") }, onClick = { selectedEquipment = null; equipmentMenu = false })
+                    equipment.forEach { item -> DropdownMenuItem(text = { Text(item) }, onClick = { selectedEquipment = item; equipmentMenu = false }) }
+                }
+            }
+        }
         Text("${names.size} упражнений", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (allNames.isEmpty()) Text("В этом профиле пока нет упражнений в планах или истории.", color = LocalPalette.current.muted)
-            else if (names.isEmpty()) Text("По запросу ничего не найдено. Измени поиск.", color = LocalPalette.current.muted)
+            if (allNames.isEmpty()) Text("В планах и истории этого профиля пока нет упражнений. Добавь первое упражнение вручную в плане.", color = LocalPalette.current.muted)
+            else if (names.isEmpty()) {
+                Text("Поиск и фильтры ничего не нашли.", color = LocalPalette.current.muted)
+                TextButton(onClick = { query = ""; verifiedOnly = false; selectedGroup = null; selectedEquipment = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Сбросить поиск и фильтры") }
+            }
             names.forEach { name ->
-                Card(onClick = { if (selectForPlan) selectedNames = if (name in selectedNames) selectedNames - name else selectedNames + name else openExercise(name) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface), border = BorderStroke(if (name in selectedNames) 1.5.dp else 1.dp, if (name in selectedNames) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .18f))) {
+                Card(onClick = { if (selectForPlan) onSelectedNamesChange(if (name in selectedNames) selectedNames - name else selectedNames + name) else openExercise(name) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface), border = BorderStroke(if (selectForPlan && name in selectedNames) 1.5.dp else 1.dp, if (selectForPlan && name in selectedNames) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .18f))) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         ExerciseArtwork(name, Modifier.size(52.dp))
                         Column(Modifier.weight(1f)) {
                             Text(name, color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
                             Text(if (verifiedGuideFor(name) != null) "Техника проверена · детали" else "Материал требует уточнения · детали", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                         }
-                        if (selectForPlan) Checkbox(checked = name in selectedNames, onCheckedChange = { checked -> selectedNames = if (checked) selectedNames + name else selectedNames - name })
+                        if (selectForPlan) {
+                            Checkbox(checked = name in selectedNames, onCheckedChange = { checked -> onSelectedNamesChange(if (checked) selectedNames + name else selectedNames - name) })
+                            TextButton(onClick = { openExercise(name) }) { Text("Детали") }
+                        }
                         else Text("Открыть", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
@@ -1055,13 +1095,15 @@ private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tracksLo
 
 @Composable
 private fun CompactNumberField(value: String, label: String, modifier: Modifier, keyboardType: KeyboardType, onValueChange: (String) -> Unit) {
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
     Surface(modifier.heightIn(min = 40.dp), shape = MaterialTheme.shapes.small, color = LocalPalette.current.background, border = BorderStroke(1.dp, LocalPalette.current.muted.copy(alpha = .25f))) {
         Box(contentAlignment = Alignment.Center) {
             if (value.isEmpty()) Text(label, color = LocalPalette.current.muted.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
             BasicTextField(
                 value = value,
                 onValueChange = { next -> onValueChange(next.filter { it.isDigit() || (keyboardType == KeyboardType.Decimal && (it == '.' || it == ',')) }.take(if (keyboardType == KeyboardType.Decimal) 8 else 4)) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp).semantics { contentDescription = label },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp).bringIntoViewRequester(bringIntoViewRequester).onFocusEvent { if (it.isFocused) scope.launch { bringIntoViewRequester.bringIntoView() } }.semantics { contentDescription = label },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = LocalPalette.current.text, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.SemiBold),
@@ -1556,7 +1598,12 @@ private fun HistoryScreen(history: List<TrainingSession>, unit: WeightUnit, targ
                 TextButton(onClick = clearTarget, modifier = Modifier.heightIn(min = 48.dp)) { Text("Показать всю историю") }
             }
         }
-        filtered.filter { it.id != targetId }.groupBy { session -> SimpleDateFormat("LLLL yyyy", Locale.forLanguageTag("ru")).format(Date(session.endedAt ?: session.startedAt)).replaceFirstChar { it.titlecase(Locale.forLanguageTag("ru")) } }.forEach { (month, sessions) ->
+        val visibleHistory = filtered.filter { it.id != targetId }
+        if (history.isNotEmpty() && visibleHistory.isEmpty() && !(targetId != null && filtered.any { it.id == targetId })) {
+            Text("По выбранному периоду и запросу тренировок нет.", color = LocalPalette.current.muted)
+            TextButton(onClick = { query = ""; period = "Всё время" }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Сбросить поиск и период") }
+        }
+        visibleHistory.groupBy { session -> SimpleDateFormat("LLLL yyyy", Locale.forLanguageTag("ru")).format(Date(session.endedAt ?: session.startedAt)).replaceFirstChar { it.titlecase(Locale.forLanguageTag("ru")) } }.forEach { (month, sessions) ->
             Text(month, color = LocalPalette.current.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             sessions.forEach { session -> SessionHistoryCard(session, unit, canSend, { resend(session.id) }, openExercise) }
         }
