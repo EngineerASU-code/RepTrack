@@ -1,16 +1,9 @@
-# Exercise photo rights review
+# Exercise artwork rights review
 
-Status: unresolved blocker for public redistribution.
+Status: the app's exercise artwork has been replaced with original generated images for the current visual MVP.
 
-The repository's exercise text/data and its photographs have separate rights status. The Free Exercise DB maintainer states that they do not know where the photographs came from or whether they are royalty free: https://github.com/yuhonas/free-exercise-db/issues/2#issuecomment-1609232397
+The previous Free Exercise DB photographs had unknown provenance and are not covered by the dataset's Unlicense. They have been removed from the app resources. The raw wger leg-press image was also removed because its individual source and license could not be verified. Exercise text/muscle metadata and the separately licensed anatomy SVGs are tracked independently in `assets-manifest.csv`.
 
-Therefore the Unlicense noted for the derived dataset must not be applied to its photos. The image rows in `assets-manifest.csv` are marked as rights-unverified and must be replaced or removed before publishing a release build. Source-page links, authors, and license terms for replacement imagery must be verified individually and recorded in the manifest. Exact movement matching and permission to redistribute are separate checks.
+Six original visual illustrations now cover the mapped demo exercises. The prompts and generation record are in [`asset-generation/exercise-artwork.md`](asset-generation/exercise-artwork.md); each image and its status is listed in `assets-manifest.csv`. No third-party image was used as an input. The images are labeled as illustrative and do not certify exercise technique. Written guidance remains separately attributed to its sources.
 
-Potential replacement candidates were reviewed for future use, but are not yet imported into the app:
-
-- [Barbell squat photo by Nenad Stojkovic, CC BY 2.0](https://commons.wikimedia.org/wiki/File:Woman_doing_squat_workout_in_gym_with_barbell.jpg)
-- [Leg press photo by Nenad Stojkovic, CC BY 2.0](https://commons.wikimedia.org/wiki/File:Young_man_using_a_leg_press_machine_at_the_gym.jpg)
-- [Lat pulldown photo by Aliva Sahoo, CC BY-SA 4.0](https://commons.wikimedia.org/wiki/File:Back_Pull_down.jpg)
-- [Seated cable row photo by Miguel Angel Omaña Rojas, CC0 1.0](https://commons.wikimedia.org/wiki/File:Woman_using_a_seated_cable_row_machine_at_the_gym.jpg)
-
-Candidates still require exact equipment/variant review and downloaded-file attribution metadata before app integration. This note does not claim the app currently meets the exercise-media requirement.
+OpenAI's [Terms of Use](https://openai.com/policies/terms-of-use/) effective 2026-01-01 state that, as between the user and OpenAI and to the extent permitted by applicable law, the user owns generated output. The terms also say outputs may not be unique and require human evaluation for accuracy and suitability. This repository records the generation origin; it does not make a broader claim about legal protection or uniqueness.

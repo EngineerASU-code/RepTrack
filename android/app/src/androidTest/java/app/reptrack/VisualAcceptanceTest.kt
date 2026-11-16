@@ -22,16 +22,24 @@ class VisualAcceptanceTest {
     fun captureRootScreensInPurplePro() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val original = readUiPreferences(context)
+        val originalRestTimerEnabled = readRestTimerEnabled(context)
         val repository = DiaryRepository(context)
         var createdSession: String? = null
         var scenario: ActivityScenario<MainActivity>? = null
         try {
             repository.createDemoProfile()
             repository.setTheme(DiaryTheme.PURPLE_PRO)
+            repository.setRestTimerEnabled(true)
             scenario = ActivityScenario.launch(MainActivity::class.java)
             compose.waitUntil(15_000) {
                 compose.onAllNodesWithText("Демо", substring = true).fetchSemanticsNodes().isNotEmpty()
             }
+            val allProgressBounds = compose.onNodeWithTag("home-progress-all").fetchSemanticsNode().boundsInRoot
+            val minButtonWidth = 48f * context.resources.displayMetrics.density
+            org.junit.Assert.assertTrue(
+                "Home progress action is too narrow for its label (${allProgressBounds.width} px; expected at least $minButtonWidth px)",
+                allProgressBounds.width >= minButtonWidth,
+            )
             capture("C01-home")
             listOf("gym", "plan", "progress", "history").forEach { route ->
                 compose.onNodeWithTag("nav-$route").performClick()
@@ -48,11 +56,22 @@ class VisualAcceptanceTest {
                 if (route == "progress") {
                     compose.onNodeWithTag("progress-chart").performScrollTo().assertIsDisplayed()
                     capture("C11-chart")
+                    compose.onNodeWithText("История тренировок").performScrollTo().assertIsDisplayed()
+                    capture("C11-chart-bottom")
                 }
             }
             compose.onNodeWithTag("open-settings").performClick()
             compose.waitForIdle()
+            compose.onNodeWithTag("theme-lime_energy").performScrollTo().performClick()
+            waitForSelection("theme-lime_energy")
+            compose.onNodeWithTag("nav-home").performClick()
+            compose.onNodeWithTag("open-settings").performClick()
+            waitForSelection("theme-lime_energy")
+            compose.onNodeWithTag("theme-purple_pro").performScrollTo().performClick()
+            waitForSelection("theme-purple_pro")
             capture("C14-settings")
+            compose.onNodeWithText("Импортировать планы").performScrollTo().assertIsDisplayed()
+            capture("C14-settings-bottom")
             compose.onNodeWithTag("nav-home").performClick()
             org.junit.Assert.assertNull("Demo profile already has an active workout; leave it intact", repository.load().activeSession)
             compose.onNodeWithTag("start-workout").performScrollTo().performClick()
@@ -61,7 +80,22 @@ class VisualAcceptanceTest {
             compose.onNodeWithTag("finish-workout").assertIsDisplayed()
             compose.onNodeWithText("Грудь").assertIsDisplayed()
             capture("C03-workout")
-            compose.onNodeWithContentDescription("Отметить подход 1").performClick()
+            val finishButton = compose.onNodeWithTag("finish-workout")
+            val lastExerciseCard = compose.onAllNodesWithTag("workout-exercise-card").onLast()
+            lastExerciseCard.performScrollTo().assertIsDisplayed()
+            val lastCard = lastExerciseCard.fetchSemanticsNode()
+            val lastCardBounds = lastCard.boundsInRoot
+            val finishTop = finishButton.fetchSemanticsNode().boundsInRoot.top
+            org.junit.Assert.assertTrue(
+                "Last collapsed exercise is clipped (visible height=${lastCardBounds.height}, full height=${lastCard.size.height})",
+                lastCardBounds.height >= lastCard.size.height - 1f,
+            )
+            org.junit.Assert.assertTrue(
+                "Last exercise overlaps the pinned finish action (card bottom=${lastCardBounds.bottom}, action top=$finishTop)",
+                lastCardBounds.bottom <= finishTop,
+            )
+            capture("C03-workout-bottom")
+            compose.onNodeWithContentDescription("Отметить подход 1").performScrollTo().performClick()
             compose.onNodeWithText("Отдых", substring = true, useUnmergedTree = true).assertExists()
             capture("C08-rest-running")
             compose.onNodeWithContentDescription("Приостановить отдых", useUnmergedTree = true).performClick()
@@ -78,8 +112,10 @@ class VisualAcceptanceTest {
                 compose.onNodeWithTag("tab-$section").performClick()
                 if (section == "technique") {
                     compose.onNodeWithText("Техника выполнения").assertIsDisplayed()
+                    compose.onNodeWithContentDescription("Иллюстрация 1 упражнения «Жим штанги средним хватом»; техника по изображению не сертифицирована").assertIsDisplayed()
+                    capture("C06-technique")
                     compose.onNodeWithText("Источник: NASM · Barbell Bench Press").performScrollTo().assertIsDisplayed()
-                    compose.onNodeWithContentDescription("Фото 1 упражнения «Жим штанги средним хватом»; техника по фотографии не сертифицирована").assertExists()
+                    capture("C06-technique-bottom")
                 }
                 if (section == "muscles") {
                     compose.onNodeWithTag("muscle-map").assertExists()
@@ -89,7 +125,7 @@ class VisualAcceptanceTest {
                     compose.onNodeWithText("Мышцы: Free Exercise DB · Barbell Bench Press - Medium Grip").assertExists()
                     compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").assertExists()
                 }
-                capture("exercise-$section")
+                if (section != "technique") capture("exercise-$section")
             }
             compose.onNodeWithTag("exercise-back").performClick()
             compose.onNodeWithTag("finish-workout").assertIsDisplayed()
@@ -99,6 +135,7 @@ class VisualAcceptanceTest {
             createdSession?.let(repository::cancel)
             repository.setActiveProfile(original.first)
             repository.setTheme(original.second)
+            repository.setRestTimerEnabled(originalRestTimerEnabled)
             repository.close()
         }
     }
@@ -114,6 +151,22 @@ class VisualAcceptanceTest {
             }
             (settings["active_profile_id"] ?: personalProfileId) to
                 (runCatching { DiaryTheme.valueOf(settings["theme"] ?: "PURPLE_PRO") }.getOrDefault(DiaryTheme.PURPLE_PRO))
+        }
+    }
+
+    private fun readRestTimerEnabled(context: android.content.Context): Boolean {
+        val databaseFile = context.getDatabasePath("reptrack.db")
+        if (!databaseFile.exists()) return true
+        return SQLiteDatabase.openDatabase(databaseFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            db.rawQuery("SELECT value FROM app_settings WHERE key='rest_timer_enabled'", null).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0).toBooleanStrictOrNull() ?: true else true
+            }
+        }
+    }
+
+    private fun waitForSelection(tag: String) {
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag(tag).assertIsSelected() }.isSuccess
         }
     }
 

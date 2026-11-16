@@ -51,17 +51,30 @@ class WorkoutImeAcceptanceTest {
                 var imeVisible = false
                 scenario?.onActivity { activity ->
                     imeVisible = if (android.os.Build.VERSION.SDK_INT >= 30) {
-                        activity.window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+                        val insets = activity.window.decorView.rootWindowInsets
+                        insets?.isVisible(WindowInsets.Type.ime()) == true &&
+                            insets.getInsets(WindowInsets.Type.ime()).bottom > 0
                     } else false
                 }
                 imeVisible
             }
+            compose.waitUntil(5_000) {
+                val row = compose.onAllNodesWithTag("workout-set-row").onLast().fetchSemanticsNode()
+                val actionTop = finishButton.fetchSemanticsNode().boundsInRoot.top
+                row.boundsInRoot.height >= row.size.height - 1f && row.boundsInRoot.bottom <= actionTop
+            }
             capture("C04-workout-ime")
-            val fieldBottom = lastRepsField.fetchSemanticsNode().boundsInRoot.bottom
-            val actionTop = finishButton.fetchSemanticsNode().boundsInRoot.top
+            val settledRow = compose.onAllNodesWithTag("workout-set-row").onLast().fetchSemanticsNode()
+            val settledBounds = settledRow.boundsInRoot
             assertTrue(
-                "Last reps field overlaps the pinned finish action (field bottom=$fieldBottom, action top=$actionTop)",
-                fieldBottom <= actionTop,
+                "Last set row is clipped above the visible viewport (visible height=${settledBounds.height}, full height=${settledRow.size.height})",
+                settledBounds.height >= settledRow.size.height - 1f,
+            )
+            val actionTop = finishButton.fetchSemanticsNode().boundsInRoot.top
+            val rowBottom = settledBounds.bottom
+            assertTrue(
+                "Last set row overlaps the pinned finish action (row bottom=$rowBottom, action top=$actionTop)",
+                rowBottom <= actionTop,
             )
         } finally {
             scenario?.close()

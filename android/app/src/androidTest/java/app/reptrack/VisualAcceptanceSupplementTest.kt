@@ -147,6 +147,9 @@ class VisualAcceptanceActivitySupplementTest {
         repository.addExercise(plan.id, longExercise)
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val originalFontScale = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand("settings get system font_scale")
+        ).bufferedReader().use { it.readText().trim() }.takeIf { it.toFloatOrNull() != null } ?: "1.0"
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             compose.waitUntil(15_000) {
@@ -158,17 +161,25 @@ class VisualAcceptanceActivitySupplementTest {
                 val suffix = scale.replace('.', '-')
                 compose.onNodeWithTag("open-profiles").performClick()
                 compose.onAllNodesWithText(longProfile, substring = true).onFirst().performScrollTo().assertIsDisplayed()
+                if (scale == "2.0") {
+                    val screenWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
+                    val action = compose.onAllNodesWithTag("profile-open-diary").onFirst().performScrollTo().assertIsDisplayed().fetchSemanticsNode()
+                    org.junit.Assert.assertTrue(
+                        "Large-font profile action is too narrow to read (${action.boundsInRoot.width} px; screen $screenWidth px)",
+                        action.boundsInRoot.width >= screenWidth * 0.7f,
+                    )
+                }
                 capture("C15-long-profile-font-$suffix")
 
                 compose.onNodeWithTag("nav-plan").performClick()
                 compose.onNodeWithText(longExercise, substring = true).performScrollTo().performClick()
-                compose.onNodeWithText(longExercise, substring = true).assertIsDisplayed()
+                compose.onNodeWithTag("exercise-screen-title").assertIsDisplayed().assertTextEquals(longExercise)
                 capture("C15-long-exercise-font-$suffix")
                 compose.onNodeWithTag("exercise-back").performClick()
             }
         } finally {
             scenario.close()
-            instrumentation.uiAutomation.executeShellCommand("settings put system font_scale 1.0").close()
+            instrumentation.uiAutomation.executeShellCommand("settings put system font_scale $originalFontScale").close()
         }
     }
 

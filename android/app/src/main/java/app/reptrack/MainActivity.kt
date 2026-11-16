@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +21,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,7 +36,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -147,7 +153,13 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
             containerColor = LocalPalette.current.background,
             topBar = { TopAppBar(
                 title = {
-                    if (exerciseScreen != null) Text(exerciseScreen.orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (exerciseScreen != null) Text(
+                        if (LocalDensity.current.fontScale >= 1.5f) "Упражнение" else exerciseScreen.orEmpty(),
+                        color = LocalPalette.current.text,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     else if (catalogScreen) Text("Каталог упражнений", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
                     else if (workoutOpen) Column {
                         Text(state.activeSession?.planName?.removePrefix("Демо · ").orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1)
@@ -184,11 +196,20 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                     tabs.forEachIndexed { index, item ->
                         val selected = tab == item
                         val tag = listOf("home", "gym", "plan", "progress", "history")[index]
-                        Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable { tab = item }.testTag("nav-$tag").padding(vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        val compactNavigation = LocalDensity.current.fontScale >= 1.5f
+                        Column(
+                            Modifier.weight(1f).heightIn(min = 56.dp)
+                                .semantics { contentDescription = item; this.selected = selected }
+                                .clickable { tab = item }
+                                .testTag("nav-$tag")
+                                .padding(vertical = 5.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
                             Box(Modifier.size(30.dp).background(if (selected) LocalPalette.current.accent.copy(alpha = .18f) else Color.Transparent, CircleShape), contentAlignment = Alignment.Center) {
                                 CompositionLocalProvider(LocalContentColor provides if (selected) LocalPalette.current.secondary else LocalPalette.current.muted) { NavigationGlyph(tabIcons[index]) }
                             }
-                            Text(item, color = if (selected) LocalPalette.current.secondary else LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            if (!compactNavigation) Text(item, color = if (selected) LocalPalette.current.secondary else LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                         }
                     }
                 } else state.activeSession?.let { WorkoutBottomBar(it, tick, pause = vm::pauseRest, resume = vm::resumeRest, skip = vm::skipRest) { confirm = "finish" } }
@@ -370,8 +391,17 @@ private fun NavigationGlyph(icon: NavigationIcon) {
 }
 
 @Composable
-private fun ScreenColumn(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+private fun ScreenColumn(
+    modifier: Modifier,
+    scrollState: ScrollState = rememberScrollState(),
+    onViewportPositioned: (LayoutCoordinates) -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier.fillMaxSize().onGloballyPositioned(onViewportPositioned).verticalScroll(scrollState).padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
 }
 
 @Composable
@@ -462,14 +492,27 @@ private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
         }
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column { Text("Прогресс", color = LocalPalette.current.text, fontWeight = FontWeight.Bold); Text(progressExercise ?: "Пока нет записей", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall) }
-                    if (exerciseNames.size > 1) {
-                        Box {
-                            TextButton(onClick = { selectedExercise = exerciseNames[(exerciseNames.indexOf(progressExercise) + 1).mod(exerciseNames.size)] }) { Text("Сменить") }
-                        }
+                val compactWidth = LocalConfiguration.current.screenWidthDp < 390
+                val heading: @Composable () -> Unit = {
+                    Column(Modifier.weight(1f)) {
+                        Text("Прогресс", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                        Text(progressExercise ?: "Пока нет записей", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                     }
-                    TextButton(onClick = { navigate("Прогресс") }) { Text("Все") }
+                }
+                val actions: @Composable () -> Unit = {
+                    if (exerciseNames.size > 1) TextButton(onClick = { selectedExercise = exerciseNames[(exerciseNames.indexOf(progressExercise) + 1).mod(exerciseNames.size)] }) { Text("Сменить") }
+                    TextButton(onClick = { navigate("Прогресс") }, modifier = Modifier.testTag("home-progress-all")) { Text("Все") }
+                }
+                if (compactWidth) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { heading() }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { actions() }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        heading()
+                        actions()
+                    }
                 }
                 val latest = progressPoints.lastOrNull()
                 val previous = progressPoints.dropLast(1).lastOrNull()
@@ -536,10 +579,19 @@ private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modi
                         Text(if (linked) "Устройство связано · файлы защищены" else "Доверенное устройство не подключено", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick = { vm.setActiveProfile(profile.id) { error -> if (error == null) openSettings() } }, modifier = Modifier.fillMaxWidth()) { Text("Связь и обмен файлами") }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val largeFont = LocalDensity.current.fontScale >= 1.3f
+                    val actions: @Composable (Modifier) -> Unit = { buttonModifier ->
                         if (state.activeProfileId == profile.id) Text("Выбран", color = LocalPalette.current.secondary, modifier = Modifier.padding(12.dp))
-                        else OutlinedButton(onClick = { vm.setActiveProfile(profile.id) }) { Text("Открыть дневник") }
-                        if (profile.kind == ProfileKind.TRAINEE) TextButton(onClick = { renameProfile = profile }) { Text("Переименовать") }
+                        else OutlinedButton(
+                            onClick = { vm.setActiveProfile(profile.id) },
+                            modifier = buttonModifier.testTag("profile-open-diary"),
+                        ) { Text("Открыть дневник") }
+                        if (profile.kind == ProfileKind.TRAINEE) TextButton(onClick = { renameProfile = profile }, modifier = buttonModifier) { Text("Переименовать") }
+                    }
+                    if (largeFont) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        actions(Modifier.fillMaxWidth())
+                    } else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        actions(Modifier)
                     }
                     if (profile.kind == ProfileKind.TRAINEE) {
                         val assignments = state.assignments.filter { it.profileId == profile.id }
@@ -681,9 +733,13 @@ private fun ExerciseCatalogScreen(state: DiarySnapshot, modifier: Modifier, sele
 @Composable
 private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, tick: Long, confirm: (String) -> Unit, openCatalog: () -> Unit, openExercise: (String) -> Unit) {
     val session = state.activeSession
+    val scrollState = rememberScrollState()
+    var viewportCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val scrollScope = rememberCoroutineScope()
+    val density = LocalDensity.current
     var replacementFor by remember { mutableStateOf<String?>(null) }
     var exerciseActionsFor by remember { mutableStateOf<String?>(null) }
-    ScreenColumn(modifier) {
+    ScreenColumn(modifier, scrollState, { viewportCoordinates = it }) {
         if (session == null) ScreenTitle("Зал", "Отмечай фактические подходы")
         if (session == null) {
             val recommended = state.nextPlan
@@ -732,7 +788,7 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
             }
             session.exercises.forEach { exercise ->
                 var expanded by rememberSaveable(session.id, exercise.id) { mutableStateOf(exercise.position == 0) }
-                Card(border = BorderStroke(1.dp, if (expanded) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = 0.2f)), colors = CardDefaults.cardColors(containerColor = if (expanded) LocalPalette.current.accent.copy(alpha = .06f) else LocalPalette.current.surface)) {
+                Card(modifier = Modifier.testTag("workout-exercise-card"), border = BorderStroke(1.dp, if (expanded) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = 0.2f)), colors = CardDefaults.cardColors(containerColor = if (expanded) LocalPalette.current.accent.copy(alpha = .06f) else LocalPalette.current.surface)) {
                     Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             ExerciseArtwork(exercise.name, Modifier.size(48.dp))
@@ -793,7 +849,22 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                                 Text("Повторы", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
                                 Spacer(Modifier.width(48.dp)); Spacer(Modifier.width(48.dp))
                             }
-                            exercise.sets.forEachIndexed { index, set -> SetEditor(index, set, vm, exercise.tracksLoad, state.settings.weightUnit) }
+                            exercise.sets.forEachIndexed { index, set -> SetEditor(index, set, vm, exercise.tracksLoad, state.settings.weightUnit) { row ->
+                                scrollScope.launch {
+                                    delay(250)
+                                    repeat(2) {
+                                        viewportCoordinates?.let { viewport ->
+                                            val rowBottom = row.localToWindow(Offset.Zero).y + row.size.height
+                                            val viewportBottom = viewport.localToWindow(Offset.Zero).y + viewport.size.height
+                                            val overflow = rowBottom - viewportBottom + with(density) { 8.dp.toPx() }
+                                            if (overflow > 0f) {
+                                                scrollState.animateScrollTo((scrollState.value + overflow.toInt()).coerceAtMost(scrollState.maxValue))
+                                            }
+                                        }
+                                        delay(120)
+                                    }
+                                }
+                            } }
                         }
                         if (!exercise.skipped) OutlinedButton(onClick = { vm.addSet(exercise.id) }, modifier = Modifier.fillMaxWidth()) { Text("Добавить подход") }
                         }
@@ -801,6 +872,7 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                 }
             }
         }
+        if (session != null) Spacer(Modifier.height(96.dp))
         Spacer(Modifier.height(8.dp))
     }
 }
@@ -910,6 +982,7 @@ internal fun verifiedGuideFor(name: String): ExerciseGuide? {
 private fun ExerciseDetailScreen(name: String, state: DiarySnapshot, vm: DiaryViewModel, tick: Long, modifier: Modifier, onBack: () -> Unit, openSession: (String) -> Unit) {
     var selectedTab by rememberSaveable(name) { mutableIntStateOf(0) }
     val detailScrollState = rememberScrollState()
+    val largeFont = LocalDensity.current.fontScale >= 1.3f
     LaunchedEffect(selectedTab) { detailScrollState.scrollTo(0) }
     val guide = remember(name) { verifiedGuideFor(name) }
     val related = state.history.flatMap { session ->
@@ -923,16 +996,26 @@ private fun ExerciseDetailScreen(name: String, state: DiarySnapshot, vm: DiaryVi
 
         Surface(modifier = modifier.fillMaxSize(), color = LocalPalette.current.background) {
             Column {
-                TabRow(selectedTabIndex = selectedTab, containerColor = LocalPalette.current.background) {
-                    listOf("Подходы", "Техника", "Мышцы").forEachIndexed { index, title ->
+                val tabTitles = listOf("Подходы", "Техника", "Мышцы")
+                val tabContent: @Composable () -> Unit = {
+                    tabTitles.forEachIndexed { index, title ->
                         val tag = listOf("tab-sets", "tab-technique", "tab-muscles")[index]
                         Tab(selected = selectedTab == index, onClick = { selectedTab = index }, modifier = Modifier.testTag(tag), text = { Text(title) })
                     }
                 }
+                if (largeFont) ScrollableTabRow(selectedTabIndex = selectedTab, containerColor = LocalPalette.current.background, edgePadding = 16.dp, tabs = tabContent)
+                else TabRow(selectedTabIndex = selectedTab, containerColor = LocalPalette.current.background, tabs = tabContent)
                 Column(
                     Modifier.weight(1f).verticalScroll(detailScrollState).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
+                    if (largeFont) Text(
+                        name,
+                        modifier = Modifier.fillMaxWidth().testTag("exercise-screen-title"),
+                        color = LocalPalette.current.text,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
                     when (selectedTab) {
                         0 -> {
                             ExerciseArtwork(name, Modifier.fillMaxWidth().height(190.dp))
@@ -983,7 +1066,7 @@ private fun ExerciseDetailScreen(name: String, state: DiarySnapshot, vm: DiaryVi
                             ExerciseTechniqueMedia(name, Modifier.fillMaxWidth())
                             if (guide == null) {
                                 Text("Техника для этого варианта пока не проверена", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
-                                Text("Фотографии помогают узнать упражнение, но не заменяют проверенную инструкцию. Для этого варианта шаги пока не добавлены.", color = LocalPalette.current.muted)
+                                Text("Иллюстрации помогают узнать упражнение, но не заменяют проверенную инструкцию. Для этого варианта шаги пока не добавлены.", color = LocalPalette.current.muted)
                             } else {
                                 Text(guide.equipment, color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                                 Text("Техника выполнения", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
@@ -1069,18 +1152,28 @@ private fun ExerciseMediaPlaceholder(label: String) {
 }
 
 @Composable
-private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tracksLoad: Boolean, unit: WeightUnit) {
+private fun SetEditor(
+    index: Int,
+    set: TrainingSet,
+    vm: DiaryViewModel,
+    tracksLoad: Boolean,
+    unit: WeightUnit,
+    onFieldFocused: ((LayoutCoordinates) -> Unit)? = null,
+) {
     var weight by remember(set.id, set.weight, unit) { mutableStateOf(displayWeight(set.weight, unit)) }
     var reps by remember(set.id) { mutableStateOf(set.reps) }
     var menu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).background(if (index % 2 == 0) LocalPalette.current.background.copy(alpha = .45f) else Color.Transparent, MaterialTheme.shapes.small), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    var rowCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val focusCallback: (() -> Unit)? = onFieldFocused?.let { callback -> { rowCoordinates?.let(callback) } }
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).bringIntoViewRequester(bringIntoViewRequester).onGloballyPositioned { rowCoordinates = it }.testTag("workout-set-row").background(if (index % 2 == 0) LocalPalette.current.background.copy(alpha = .45f) else Color.Transparent, MaterialTheme.shapes.small), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.width(48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             Text("${index + 1}", color = LocalPalette.current.text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             if (set.kind == SetKind.WARMUP) Text("Р", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
         }
         if (tracksLoad) {
-            CompactNumberField(weight, "Вес ${unit.label()}", Modifier.weight(1f), KeyboardType.Decimal) { weight = it; vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }
-            CompactNumberField(reps, "Повторы", Modifier.weight(1f), KeyboardType.Number) { reps = it; vm.updateSet(set.id, reps = reps) }
+            CompactNumberField(weight, "Вес ${unit.label()}", Modifier.weight(1f), KeyboardType.Decimal, bringIntoViewRequester, focusCallback) { weight = it; vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }
+            CompactNumberField(reps, "Повторы", Modifier.weight(1f), KeyboardType.Number, bringIntoViewRequester, focusCallback) { reps = it; vm.updateSet(set.id, reps = reps) }
         } else Text("—", Modifier.weight(2f), color = LocalPalette.current.muted)
         Checkbox(checked = set.done, onCheckedChange = { vm.toggleSet(set) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Отметить подход ${index + 1}" })
         Box {
@@ -1094,8 +1187,7 @@ private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tracksLo
 }
 
 @Composable
-private fun CompactNumberField(value: String, label: String, modifier: Modifier, keyboardType: KeyboardType, onValueChange: (String) -> Unit) {
-    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+private fun CompactNumberField(value: String, label: String, modifier: Modifier, keyboardType: KeyboardType, bringIntoViewRequester: BringIntoViewRequester, onFocused: (() -> Unit)?, onValueChange: (String) -> Unit) {
     val scope = rememberCoroutineScope()
     Surface(modifier.heightIn(min = 40.dp), shape = MaterialTheme.shapes.small, color = LocalPalette.current.background, border = BorderStroke(1.dp, LocalPalette.current.muted.copy(alpha = .25f))) {
         Box(contentAlignment = Alignment.Center) {
@@ -1103,7 +1195,11 @@ private fun CompactNumberField(value: String, label: String, modifier: Modifier,
             BasicTextField(
                 value = value,
                 onValueChange = { next -> onValueChange(next.filter { it.isDigit() || (keyboardType == KeyboardType.Decimal && (it == '.' || it == ',')) }.take(if (keyboardType == KeyboardType.Decimal) 8 else 4)) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp).bringIntoViewRequester(bringIntoViewRequester).onFocusEvent { if (it.isFocused) scope.launch { bringIntoViewRequester.bringIntoView() } }.semantics { contentDescription = label },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp).onFocusEvent {
+                    if (it.isFocused) {
+                        if (onFocused != null) onFocused() else scope.launch { bringIntoViewRequester.bringIntoView() }
+                    }
+                }.semantics { contentDescription = label },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = LocalPalette.current.text, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.SemiBold),
@@ -1354,12 +1450,19 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
                     DiaryTheme.entries.forEach { theme ->
                         val selected = state.settings.theme == theme
                         val preview = paletteFor(theme)
-                        Surface(onClick = { vm.setTheme(theme) }, shape = MaterialTheme.shapes.medium, color = preview.background, border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .35f))) {
+                        Surface(
+                            modifier = Modifier.semantics { this.selected = selected }.testTag("theme-${theme.name.lowercase(Locale.ROOT)}"),
+                            onClick = { vm.setTheme(theme) },
+                            shape = MaterialTheme.shapes.medium,
+                            color = preview.background,
+                            border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .35f)),
+                        ) {
                             Column(Modifier.width(112.dp).heightIn(min = 90.dp).padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                                     Box(Modifier.size(22.dp).background(preview.surface, CircleShape))
                                     Box(Modifier.size(22.dp).background(preview.accent, CircleShape))
                                     Box(Modifier.size(22.dp).background(preview.secondary, CircleShape))
+                                    if (selected) Text("✓", color = preview.text, fontWeight = FontWeight.Bold, modifier = Modifier.semantics { contentDescription = "Выбрано" })
                                 }
                                 Text(theme.title(), color = preview.text, style = MaterialTheme.typography.labelMedium, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 2)
                             }

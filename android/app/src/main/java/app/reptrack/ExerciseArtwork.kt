@@ -37,11 +37,11 @@ fun ExerciseArtwork(name: String, modifier: Modifier = Modifier) {
     if (firstPhoto == null) {
         MissingExerciseArtwork(name, modifier, RoundedCornerShape(12.dp))
     } else {
-        CatalogPhoto(name, firstPhoto, "Изображение упражнения «$name» из открытого каталога упражнений", modifier)
+        CatalogPhoto(name, firstPhoto, "Иллюстрация упражнения «$name»; не является инструкцией по технике", modifier)
     }
 }
 
-/** Shows the available local photo frames for an exact exercise variant. */
+/** Shows the available local illustrative artwork for an exact exercise variant. */
 @Composable
 fun ExerciseTechniqueMedia(name: String, modifier: Modifier = Modifier) {
     val photos = exercisePhotos(name)
@@ -72,7 +72,7 @@ fun ExerciseTechniqueMedia(name: String, modifier: Modifier = Modifier) {
             }
         }
         Text(
-            "Фотографии из каталога упражнений; они не заменяют проверенную инструкцию по технике.",
+            "Иллюстрации для наглядности; они не заменяют проверенную инструкцию по технике.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall
         )
@@ -84,27 +84,27 @@ private fun TechniquePhoto(name: String, index: Int, resource: Int, modifier: Mo
     CatalogPhoto(
         name,
         resource,
-        "Фото ${index + 1} упражнения «$name»; техника по фотографии не сертифицирована",
+        "Иллюстрация ${index + 1} упражнения «$name»; техника по изображению не сертифицирована",
         modifier.aspectRatio(1.5f)
     )
-    Text("Фото ${index + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+    Text("Иллюстрация ${index + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
 }
 
 private fun exercisePhotos(name: String): List<Int> = when (
     name.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
 ) {
     "жим штанги средним хватом", "barbell bench press - medium grip" ->
-        listOf(R.drawable.exercise_barbell_bench_press_medium_0, R.drawable.exercise_barbell_bench_press_medium_1)
+        listOf(R.drawable.exercise_art_bench_press)
     "тяга верхнего блока широким хватом", "wide-grip lat pulldown (cable)" ->
-        listOf(R.drawable.exercise_wide_grip_lat_pulldown_0, R.drawable.exercise_wide_grip_lat_pulldown_1)
+        listOf(R.drawable.exercise_art_lat_pulldown)
     "приседания со штангой", "barbell squat" ->
-        listOf(R.drawable.exercise_barbell_squat_0, R.drawable.exercise_barbell_squat_1)
+        listOf(R.drawable.exercise_art_barbell_squat)
     "жим ногами", "leg press (machine)" ->
-        listOf(R.drawable.exercise_leg_press_0, R.drawable.exercise_leg_press_1)
+        listOf(R.drawable.exercise_art_leg_press)
     "тяга нижнего блока узким хватом", "seated cable rows" ->
-        listOf(R.drawable.exercise_seated_cable_row_0, R.drawable.exercise_seated_cable_row_1)
+        listOf(R.drawable.exercise_art_seated_cable_row)
     "попеременные молотки с гантелями", "alternate hammer curl (dumbbells, alternating)" ->
-        listOf(R.drawable.exercise_alternate_hammer_curl_0)
+        listOf(R.drawable.exercise_art_hammer_curl)
     else -> emptyList()
 }
 
