@@ -1,0 +1,12 @@
+RepTrack anatomy assets
+
+The male front and back SVG maps are copied from the minimal assets in
+suryamolly/muscle_mapper (MIT License):
+https://github.com/suryamolly/muscle_mapper/tree/main/lib/src/assets/minimal
+Source files: male_front_muscle_anatomy.svg and male_back_muscle_anatomy.svg
+RepTrack recolors the existing muscle regions at runtime to distinguish primary
+and secondary exercise groups. Copyright (c) 2026 Surya Mouly. The full MIT
+license is included beside these assets.
+
+The CC BY 4.0 notice in the upstream repository applies to its separate
+advanced SVG assets; those assets are not included in RepTrack.

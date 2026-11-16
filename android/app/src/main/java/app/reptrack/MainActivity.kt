@@ -5,33 +5,39 @@ import android.content.ClipData
 import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,14 +55,14 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import androidx.core.content.FileProvider
 
-private data class AppPalette(val background: Color, val surface: Color, val accent: Color, val secondary: Color, val muted: Color, val text: Color, val light: Boolean = false) {
+internal data class AppPalette(val background: Color, val surface: Color, val accent: Color, val secondary: Color, val muted: Color, val text: Color, val light: Boolean = false) {
     fun colorScheme() = if (light) lightColorScheme(background = background, surface = surface, primary = accent, secondary = secondary, onBackground = text, onSurface = text)
     else darkColorScheme(background = background, surface = surface, primary = accent, secondary = secondary, onBackground = text, onSurface = text)
 }
 
 private val purplePro = AppPalette(Color(0xFF12101C), Color(0xFF211C31), Color(0xFF8957F6), Color(0xFFB4A0FF), Color(0xFFA9A3B9), Color(0xFFF7F5FC))
-private val LocalPalette = staticCompositionLocalOf { purplePro }
-private fun paletteFor(theme: DiaryTheme) = when (theme) {
+internal val LocalPalette = staticCompositionLocalOf { purplePro }
+internal fun paletteFor(theme: DiaryTheme) = when (theme) {
     DiaryTheme.PURPLE_PRO -> purplePro
     DiaryTheme.LIME_ENERGY -> AppPalette(Color(0xFF10150E), Color(0xFF1B2517), Color(0xFFB2F36B), Color(0xFFD6FFA0), Color(0xFFAAB59F), Color(0xFFF5F8F1))
     DiaryTheme.BLUE_TECH -> AppPalette(Color(0xFF0E121C), Color(0xFF1A2333), Color(0xFF448AFF), Color(0xFFA9C6FF), Color(0xFFA4ADBF), Color(0xFFF5F7FC))
@@ -73,7 +79,7 @@ private fun DiaryTheme.title() = when (this) {
     DiaryTheme.GRAPHITE_MINIMAL -> "Graphite Minimal"
 }
 private val tabs = listOf("Главная", "Зал", "План", "Прогресс", "История")
-private enum class NavigationIcon { HOME, GYM, PLAN, PROGRESS, HISTORY, SETTINGS }
+private enum class NavigationIcon { HOME, GYM, PLAN, PROGRESS, HISTORY, SETTINGS, MORE, PAUSE, PLAY, SKIP, BACK }
 private val tabIcons = listOf(NavigationIcon.HOME, NavigationIcon.GYM, NavigationIcon.PLAN, NavigationIcon.PROGRESS, NavigationIcon.HISTORY)
 
 class MainActivity : ComponentActivity() {
@@ -108,6 +114,9 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
     var tab by remember { mutableStateOf("Главная") }
     var confirm by remember { mutableStateOf<String?>(null) }
     var historyTarget by remember { mutableStateOf<String?>(null) }
+    var exerciseScreen by rememberSaveable { mutableStateOf<String?>(null) }
+    var catalogScreen by rememberSaveable { mutableStateOf(false) }
+    var catalogTargetPlanId by rememberSaveable { mutableStateOf<String?>(null) }
     var retryDeliverySessionId by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableLongStateOf(0L) }
     fun shareTelegramDelivery(bytes: ByteArray) {
@@ -123,30 +132,76 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
     LaunchedEffect(state.activeSession?.id) { while (state.activeSession != null) { delay(1000); tick++ } }
 
     val palette = paletteFor(state.settings.theme)
-    val showBottomNavigation = tab != "Зал" || state.activeSession == null
+    val workoutOpen = tab == "Зал" && state.activeSession != null && exerciseScreen == null && !catalogScreen
+    val showBottomNavigation = !workoutOpen && exerciseScreen == null && !catalogScreen
+    BackHandler(enabled = exerciseScreen != null) { exerciseScreen = null }
+    BackHandler(enabled = catalogScreen) { catalogScreen = false }
+    BackHandler(enabled = workoutOpen) { tab = "Главная" }
     CompositionLocalProvider(LocalPalette provides palette) {
-    MaterialTheme(colorScheme = palette.colorScheme()) {
+    MaterialTheme(colorScheme = palette.colorScheme(), shapes = MaterialTheme.shapes.copy(small = RoundedCornerShape(10.dp), medium = RoundedCornerShape(16.dp), large = RoundedCornerShape(16.dp))) {
         Scaffold(
             containerColor = LocalPalette.current.background,
-            topBar = { TopAppBar(title = { Row {
-                Text("Rep", color = LocalPalette.current.accent, fontWeight = FontWeight.Bold)
-                Text("Track", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
-            } }, actions = {
-                TextButton(onClick = { tab = "Люди" }) { Text(state.activeProfile?.name ?: "Профиль", color = LocalPalette.current.secondary) }
-                IconButton(onClick = { tab = "Настройки" }, modifier = Modifier.semantics { contentDescription = "Настройки" }) { NavigationGlyph(NavigationIcon.SETTINGS) }
-            }, colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text)) },
-            bottomBar = {
-                if (showBottomNavigation) NavigationBar(containerColor = LocalPalette.current.surface) {
-                    tabs.forEachIndexed { index, item ->
-                        NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { NavigationGlyph(tabIcons[index]) }, label = { Text(item) })
+            topBar = { TopAppBar(
+                title = {
+                    if (exerciseScreen != null) Text(exerciseScreen.orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1)
+                    else if (catalogScreen) Text("Каталог упражнений", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                    else if (workoutOpen) Column {
+                        Text(state.activeSession?.planName?.removePrefix("Демо · ").orEmpty(), color = LocalPalette.current.text, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text("${((System.currentTimeMillis() - (state.activeSession?.startedAt ?: 0L)) / 60000L).coerceAtLeast(0)} мин · тренировка", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                    } else Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(Modifier.size(30.dp), shape = CircleShape, color = LocalPalette.current.accent.copy(alpha = .18f)) { Box(contentAlignment = Alignment.Center) { NavigationGlyph(NavigationIcon.GYM) } }
+                        Spacer(Modifier.width(8.dp))
+                        Text("Rep", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                        Text("Track", color = LocalPalette.current.accent, fontWeight = FontWeight.Bold)
                     }
-                }
+                },
+                navigationIcon = {
+                    if (exerciseScreen != null) IconButton(onClick = { exerciseScreen = null }, modifier = Modifier.testTag("exercise-back")) { NavigationGlyph(NavigationIcon.BACK) }
+                    else if (catalogScreen) IconButton(onClick = { catalogScreen = false }) { NavigationGlyph(NavigationIcon.BACK) }
+                    else if (workoutOpen) IconButton(onClick = { tab = "Главная" }) { NavigationGlyph(NavigationIcon.BACK) }
+                },
+                actions = {
+                    if (!workoutOpen && exerciseScreen == null && !catalogScreen) {
+                        TextButton(onClick = { tab = "Люди" }, modifier = Modifier.testTag("open-profiles")) {
+                            Text(
+                                if (state.activeProfile?.kind == ProfileKind.TRAINEE) "Демо" else state.activeProfile?.name ?: "Профиль",
+                                color = LocalPalette.current.secondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        IconButton(onClick = { tab = "Настройки" }, modifier = Modifier.semantics { contentDescription = "Настройки" }.testTag("open-settings")) { NavigationGlyph(NavigationIcon.SETTINGS) }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = LocalPalette.current.background, titleContentColor = LocalPalette.current.text),
+            ) },
+            bottomBar = {
+                if (showBottomNavigation) Row(Modifier.fillMaxWidth().background(LocalPalette.current.background).padding(horizontal = 4.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    tabs.forEachIndexed { index, item ->
+                        val selected = tab == item
+                        val tag = listOf("home", "gym", "plan", "progress", "history")[index]
+                        Column(Modifier.weight(1f).heightIn(min = 56.dp).clickable { tab = item }.testTag("nav-$tag").padding(vertical = 5.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Box(Modifier.size(30.dp).background(if (selected) LocalPalette.current.accent.copy(alpha = .18f) else Color.Transparent, CircleShape), contentAlignment = Alignment.Center) {
+                                CompositionLocalProvider(LocalContentColor provides if (selected) LocalPalette.current.secondary else LocalPalette.current.muted) { NavigationGlyph(tabIcons[index]) }
+                            }
+                            Text(item, color = if (selected) LocalPalette.current.secondary else LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        }
+                    }
+                } else state.activeSession?.let { WorkoutBottomBar(it, tick, pause = vm::pauseRest, resume = vm::resumeRest, skip = vm::skipRest) { confirm = "finish" } }
             },
         ) { padding ->
             if (state.loading) Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            else if (exerciseScreen != null) ExerciseDetailScreen(exerciseScreen!!, state, vm, tick, Modifier.padding(padding), onBack = { exerciseScreen = null }) { id -> historyTarget = id; tab = "История"; exerciseScreen = null }
+            else if (catalogScreen) ExerciseCatalogScreen(
+                state,
+                Modifier.padding(padding),
+                selectForPlan = catalogTargetPlanId != null,
+                openExercise = { exerciseScreen = it; catalogScreen = false },
+                addSelected = { names -> names.forEach { vm.addExercise(catalogTargetPlanId!!, it) }; catalogTargetPlanId = null; catalogScreen = false },
+            )
             else when (tab) {
-                "Зал" -> GymScreen(state, vm, Modifier.padding(padding), tick) { confirm = it }
-                "План" -> PlanScreen(state, vm, Modifier.padding(padding))
+                "Зал" -> GymScreen(state, vm, Modifier.padding(padding), tick, { confirm = it }, { catalogTargetPlanId = null; catalogScreen = true }) { exerciseScreen = it }
+                "План" -> PlanScreen(state, vm, Modifier.padding(padding), { id -> catalogTargetPlanId = id; catalogScreen = true }, { exerciseScreen = it })
                 "Люди" -> CoachScreen(
                     state,
                     vm,
@@ -155,7 +210,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                     openDemoProfile = { vm.createDemoProfile(); tab = "Главная" },
                     openSettings = { tab = "Настройки" },
                 )
-                "История" -> HistoryScreen(state.history, state.settings.weightUnit, historyTarget, { historyTarget = null }, Modifier.padding(padding), state.activeProfile?.kind == ProfileKind.PERSONAL && state.trustedLinks.any { it.localProfileId == state.activeProfileId }) { retryDeliverySessionId = it }
+                "История" -> HistoryScreen(state.history, state.settings.weightUnit, historyTarget, { historyTarget = null }, Modifier.padding(padding), state.activeProfile?.kind == ProfileKind.PERSONAL && state.trustedLinks.any { it.localProfileId == state.activeProfileId }, { retryDeliverySessionId = it }) { exerciseScreen = it }
                 "Прогресс" -> ProgressScreen(state, Modifier.padding(padding)) { id -> historyTarget = id; tab = "История" }
                 "Настройки" -> SettingsScreen(state, vm, Modifier.padding(padding), incomingUri, onIncomingConsumed)
                 else -> HomeScreen(state, vm, Modifier.padding(padding)) { tab = it }
@@ -185,7 +240,7 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
                 }
             } },
             confirmButton = { Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(onClick = { session?.let { if (action == "finish") vm.finish(it.id) else vm.cancel(it.id) }; confirm = null }, modifier = Modifier.fillMaxWidth()) { Text(if (action == "finish") "Только завершить" else "Отменить сессию") }
+                Button(onClick = { session?.let { if (action == "finish") vm.finish(it.id) else vm.cancel(it.id) }; confirm = null }, modifier = Modifier.fillMaxWidth().testTag("confirm-finish-workout")) { Text(if (action == "finish") "Только завершить" else "Отменить сессию") }
                 if (resultLinks.isNotEmpty()) OutlinedButton(onClick = {
                     val linkId = selectedResultLinkId
                     if (linkId != null && session != null) vm.finishAndCreateTelegramDelivery(linkId, session.id) { file, error ->
@@ -222,6 +277,33 @@ private fun RepTrackApp(vm: DiaryViewModel, incomingUri: Uri?, onIncomingConsume
             dismissButton = { TextButton(onClick = { retryDeliverySessionId = null }) { Text("Отмена") } },
         )
     }
+    }
+}
+
+@Composable
+private fun WorkoutBottomBar(
+    session: TrainingSession,
+    tick: Long,
+    pause: (String) -> Unit,
+    resume: (String) -> Unit,
+    skip: (String) -> Unit,
+    finish: () -> Unit,
+) {
+    val resting = session.exercises.asSequence().flatMap { it.sets.asSequence() }.firstOrNull { set ->
+        (set.restUntil ?: 0L) > System.currentTimeMillis() || set.restRemaining > 0L
+    }
+    Column(Modifier.fillMaxWidth().background(LocalPalette.current.surface).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (resting != null) {
+            val seconds = resting.restUntil?.let { ((it - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L) } ?: (resting.restRemaining / 1000L)
+            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Отдых  %02d:%02d".format(seconds / 60, seconds % 60), color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold)
+                Row {
+                    IconButton(onClick = { if (resting.restUntil != null) pause(resting.id) else resume(resting.id) }, modifier = Modifier.size(48.dp).semantics { contentDescription = if (resting.restUntil != null) "Приостановить отдых" else "Продолжить отдых" }) { NavigationGlyph(if (resting.restUntil != null) NavigationIcon.PAUSE else NavigationIcon.PLAY) }
+                    IconButton(onClick = { skip(resting.id) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Пропустить отдых" }) { NavigationGlyph(NavigationIcon.SKIP) }
+                }
+            }
+        }
+        Button(onClick = finish, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("finish-workout")) { Text("Завершить тренировку") }
     }
 }
 
@@ -272,6 +354,11 @@ private fun NavigationGlyph(icon: NavigationIcon) {
                     line(.5f + kotlin.math.cos(angle).toFloat() * .29f, .5f + kotlin.math.sin(angle).toFloat() * .29f, .5f + kotlin.math.cos(angle).toFloat() * .43f, .5f + kotlin.math.sin(angle).toFloat() * .43f)
                 }
             }
+            NavigationIcon.MORE -> repeat(3) { index -> drawCircle(color, radius = w * .065f, center = androidx.compose.ui.geometry.Offset(w * .5f, h * (.25f + index * .25f))) }
+            NavigationIcon.PAUSE -> { line(.34f, .22f, .34f, .78f); line(.66f, .22f, .66f, .78f) }
+            NavigationIcon.PLAY -> { drawPath(androidx.compose.ui.graphics.Path().apply { moveTo(w * .32f, h * .2f); lineTo(w * .78f, h * .5f); lineTo(w * .32f, h * .8f); close() }, color) }
+            NavigationIcon.SKIP -> { line(.2f, .2f, .58f, .5f); line(.58f, .5f, .2f, .8f); line(.2f, .5f, .58f, .5f); line(.72f, .2f, .72f, .8f) }
+            NavigationIcon.BACK -> { line(.76f, .5f, .24f, .5f); line(.24f, .5f, .48f, .26f); line(.24f, .5f, .48f, .74f) }
         }
     }
 }
@@ -290,66 +377,106 @@ private fun ScreenTitle(title: String, subtitle: String) {
 }
 
 @Composable
+private fun PrimaryActionButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, tag: String? = null, enabled: Boolean = true) {
+    val brush = Brush.horizontalGradient(listOf(Color(0xFF8957F6), Color(0xFFB05AFF)))
+    val taggedModifier = tag?.let { modifier.testTag(it) } ?: modifier
+    Button(onClick = onClick, modifier = taggedModifier.fillMaxWidth().heightIn(min = 50.dp), contentPadding = PaddingValues(0.dp), enabled = enabled, colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White)) {
+        Row(Modifier.fillMaxWidth().height(50.dp).background(brush, RoundedCornerShape(14.dp)), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            NavigationGlyph(NavigationIcon.PLAY)
+            Spacer(Modifier.width(8.dp))
+            Text(label, color = Color.White, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
 private fun HomeScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, navigate: (String) -> Unit) {
     val active = state.activeSession
     val next = state.nextPlan
     val cycle = state.plans.filter { it.inCycle }
-    val progressExercise = state.history.asSequence().flatMap { it.exercises.asSequence() }
+    val lastPlanId = state.history.firstOrNull()?.planId
+    val targetGroups = (active?.exercises?.map { it.name } ?: next?.exercises?.map { it.name }.orEmpty())
+        .flatMap { verifiedGuideFor(it)?.primaryMuscles.orEmpty() }
+        .distinct()
+        .joinToString(" · ") { it.compactLabel }
+    var selectedExercise by rememberSaveable { mutableStateOf<String?>(null) }
+    val exerciseNames = state.history.asSequence().flatMap { it.exercises.asSequence() }
         .filter { it.tracksLoad }
         .map { it.name }
         .distinct()
-        .map { name -> name to calculateProgressSeries(state.history, name, System.currentTimeMillis() - 30 * 86_400_000L).size }
-        .filter { it.second > 0 }
-        .maxByOrNull { it.second }
-        ?.first
-    ScreenColumn(modifier) {
-        ScreenTitle("Главная", "Твой прогресс. Твой план.")
-        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(if (active != null) "ТРЕНИРОВКА В ПРОЦЕССЕ" else "СЛЕДУЮЩАЯ ТРЕНИРОВКА", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelLarge)
-                Text(active?.planName ?: next?.name ?: "Создай план", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
-                Text(if (active != null) "${active.completedSets} из ${active.totalSets} рабочих подходов" else "Цикл: ${state.plans.filter { it.inCycle }.joinToString(" → ") { it.name }}", color = LocalPalette.current.muted)
-                Button(onClick = { vm.start(active?.planId ?: next?.id); navigate("Зал") }, modifier = Modifier.fillMaxWidth(), enabled = active != null || next != null) {
-                    Text(if (active != null) "Продолжить тренировку" else "▶  Начать тренировку")
+        .filter { name -> calculateProgressSeries(state.history, name, System.currentTimeMillis() - 30 * 86_400_000L).isNotEmpty() }
+        .toList()
+    val progressExercise = selectedExercise?.takeIf { it in exerciseNames } ?: exerciseNames
+        .maxByOrNull { name -> calculateProgressSeries(state.history, name, System.currentTimeMillis() - 30 * 86_400_000L).size }
+    val progressPoints = progressExercise?.let { calculateProgressSeries(state.history, it, System.currentTimeMillis() - 30 * 86_400_000L) }.orEmpty()
+    Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface), border = BorderStroke(1.dp, LocalPalette.current.accent.copy(alpha = .28f))) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(if (active != null) "ТРЕНИРОВКА В ПРОЦЕССЕ" else "СЛЕДУЮЩАЯ ТРЕНИРОВКА", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Text(active?.planName?.removePrefix("Демо · ") ?: next?.name?.removePrefix("Демо · ") ?: "Создай план", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                    Text(targetGroups.ifBlank { "${active?.exercises?.size ?: next?.exercises?.size ?: 0} упражнений · по плану" }, color = LocalPalette.current.muted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (cycle.isNotEmpty()) {
-                    Text("Цикл тренировок", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        cycle.forEach { plan ->
-                            val selected = plan.id == next?.id
-                            Surface(shape = CircleShape, color = if (selected) LocalPalette.current.accent else LocalPalette.current.background) {
-                                Text(
-                                    plan.name + if (selected) " ✓" else "",
-                                    Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                    color = if (selected) LocalPalette.current.background else LocalPalette.current.text,
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
-                            }
+                HomeHeroArtwork(
+                    modifier = Modifier.size(74.dp),
+                    primaryColor = LocalPalette.current.accent,
+                    secondaryColor = LocalPalette.current.secondary,
+                )
+            }
+        }
+        PrimaryActionButton(if (active != null) "Продолжить тренировку" else "Начать тренировку", { if (active == null) vm.start(next?.id); navigate("Зал") }, Modifier, "start-workout", enabled = active != null || next != null)
+        if (active == null && next == null) TextButton(onClick = { navigate("План") }, modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp)) { Text("Создать план тренировок") }
+        if (cycle.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Цикл", color = LocalPalette.current.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("${cycle.size} тренировок", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    cycle.forEach { plan ->
+                        val selected = plan.id == next?.id
+                        val completed = plan.id == lastPlanId
+                        Surface(shape = MaterialTheme.shapes.medium, color = if (selected) LocalPalette.current.accent.copy(alpha = .18f) else LocalPalette.current.surface, border = BorderStroke(1.dp, if (selected) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .2f))) {
+                        Text(plan.name.removePrefix("Демо · ") + when { selected -> " · текущая"; completed -> " · готово"; else -> "" }, Modifier.padding(horizontal = 14.dp, vertical = 9.dp), color = if (selected) LocalPalette.current.secondary else LocalPalette.current.text, style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
             }
         }
-        if (active == null && next == null) {
-            TextButton(onClick = { navigate("План") }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Создать план тренировок") }
-        }
-        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Последняя сессия", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
-                state.history.firstOrNull()?.let { session ->
-                    Text("${session.planName} · ${date(session.endedAt ?: session.startedAt)}", color = LocalPalette.current.secondary)
-                    Text("${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов · макс. вес ${session.maxWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted)
-                } ?: Text("История пока пуста. Заверши первую тренировку — она появится здесь.", color = LocalPalette.current.muted)
+        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface), onClick = { navigate("История") }) {
+            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Последняя тренировка", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+                    state.history.firstOrNull()?.let { session ->
+                        Text(session.planName.removePrefix("Демо · "), color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                        Text("${date(session.endedAt ?: session.startedAt)} · ${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов · макс. ${session.maxWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    } ?: Text("История появится после первой тренировки", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Прогресс", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text); TextButton(onClick = { navigate("Прогресс") }) { Text("Подробнее") } }
-                Text("${state.workouts} завершённых тренировок · лучший вес ${state.bestWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.muted)
-                if (progressExercise != null) {
-                    Text("$progressExercise · рабочий вес", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-                    TrendGraph(state.history, progressExercise, System.currentTimeMillis() - 30 * 86_400_000L, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 76.dp, onPointClick = { navigate("Прогресс") })
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column { Text("Прогресс", color = LocalPalette.current.text, fontWeight = FontWeight.Bold); Text(progressExercise ?: "Пока нет записей", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall) }
+                    if (exerciseNames.size > 1) {
+                        Box {
+                            TextButton(onClick = { selectedExercise = exerciseNames[(exerciseNames.indexOf(progressExercise) + 1).mod(exerciseNames.size)] }) { Text("Сменить") }
+                        }
+                    }
+                    TextButton(onClick = { navigate("Прогресс") }) { Text("Все") }
                 }
+                val latest = progressPoints.lastOrNull()
+                val previous = progressPoints.dropLast(1).lastOrNull()
+                if (latest != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(formatWeight(latest.value, state.settings.weightUnit), color = LocalPalette.current.secondary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    previous?.let {
+                        val change = latest.value - it.value
+                        val prefix = if (change >= 0) "+" else "−"
+                        Text("$prefix${formatWeight(kotlin.math.abs(change), state.settings.weightUnit)} к прошлой", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (progressExercise != null) TrendGraph(state.history, progressExercise, System.currentTimeMillis() - 30 * 86_400_000L, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 112.dp, showLabels = false, onPointClick = { navigate("Прогресс") })
+                else Text("Заверши силовой подход — здесь появится график.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -382,7 +509,7 @@ private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modi
                 FilterChip(selected = !sortByRecent, onClick = { sortByRecent = false }, label = { Text("По имени") })
                 FilterChip(selected = sortByRecent, onClick = { sortByRecent = true }, label = { Text("По активности") })
             }
-            Button(onClick = { addProfile = true }) { Text("＋ Добавить") }
+            Button(onClick = { addProfile = true }) { Text("Добавить профиль") }
         }
         orderedProfiles.forEach { profile ->
             Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
@@ -475,57 +602,135 @@ private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modi
 private fun planDiffSummary(current: TrainingPlan, incoming: TrainingPlan): List<String> = describePlanChanges(current, incoming)
 
 @Composable
-private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, tick: Long, confirm: (String) -> Unit) {
+private fun ExerciseCatalogScreen(state: DiarySnapshot, modifier: Modifier, selectForPlan: Boolean, openExercise: (String) -> Unit, addSelected: (List<String>) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var verifiedOnly by rememberSaveable { mutableStateOf(false) }
+    var selectedNames by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    val allNames = remember(state.plans, state.history) {
+        (state.plans.flatMap { it.exercises }.map { it.name } + state.history.flatMap { it.exercises }.map { it.name }).distinct().sorted()
+    }
+    val names = allNames.filter { it.contains(query.trim(), ignoreCase = true) && (!verifiedOnly || verifiedGuideFor(it) != null) }
+    Column(modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Поиск упражнения") }, singleLine = true)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = !verifiedOnly, onClick = { verifiedOnly = false }, label = { Text("Все") })
+            FilterChip(selected = verifiedOnly, onClick = { verifiedOnly = true }, label = { Text("С проверенной техникой") })
+        }
+        Text("${names.size} упражнений", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (allNames.isEmpty()) Text("В этом профиле пока нет упражнений в планах или истории.", color = LocalPalette.current.muted)
+            else if (names.isEmpty()) Text("По запросу ничего не найдено. Измени поиск.", color = LocalPalette.current.muted)
+            names.forEach { name ->
+                Card(onClick = { if (selectForPlan) selectedNames = if (name in selectedNames) selectedNames - name else selectedNames + name else openExercise(name) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface), border = BorderStroke(if (name in selectedNames) 1.5.dp else 1.dp, if (name in selectedNames) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .18f))) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ExerciseArtwork(name, Modifier.size(52.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(name, color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
+                            Text(if (verifiedGuideFor(name) != null) "Техника проверена · детали" else "Материал требует уточнения · детали", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (selectForPlan) Checkbox(checked = name in selectedNames, onCheckedChange = { checked -> selectedNames = if (checked) selectedNames + name else selectedNames - name })
+                        else Text("Открыть", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+        if (selectForPlan) Button(onClick = { addSelected(selectedNames.toList()) }, enabled = selectedNames.isNotEmpty(), modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Добавить выбранные · ${selectedNames.size}") }
+    }
+}
+
+@Composable
+private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, tick: Long, confirm: (String) -> Unit, openCatalog: () -> Unit, openExercise: (String) -> Unit) {
     val session = state.activeSession
     var replacementFor by remember { mutableStateOf<String?>(null) }
-    var detailsFor by remember { mutableStateOf<String?>(null) }
-    var showCatalog by remember { mutableStateOf(false) }
-    var catalogQuery by remember { mutableStateOf("") }
+    var exerciseActionsFor by remember { mutableStateOf<String?>(null) }
     ScreenColumn(modifier) {
-        ScreenTitle("Зал", "Отмечай фактические подходы")
+        if (session == null) ScreenTitle("Зал", "Отмечай фактические подходы")
         if (session == null) {
-            Text("Выбери тренировку", style = MaterialTheme.typography.titleLarge, color = LocalPalette.current.text)
-            OutlinedButton(onClick = { showCatalog = !showCatalog }, modifier = Modifier.fillMaxWidth()) { Text(if (showCatalog) "Скрыть каталог упражнений" else "Каталог упражнений") }
-            if (showCatalog) {
-                val allNames = (state.plans.flatMap { it.exercises }.map { it.name } + state.history.flatMap { it.exercises }.map { it.name }).distinct().sorted()
-                val names = allNames.filter { it.contains(catalogQuery.trim(), ignoreCase = true) }
-                OutlinedTextField(catalogQuery, { catalogQuery = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Поиск упражнения") }, singleLine = true)
-                if (allNames.isEmpty()) Text("В выбранном профиле пока нет упражнений в планах или истории.", color = LocalPalette.current.muted)
-                else if (names.isEmpty()) Text("Упражнения не найдены.", color = LocalPalette.current.muted)
-                names.forEach { name -> OutlinedButton(onClick = { detailsFor = name }, modifier = Modifier.fillMaxWidth()) { Text("$name · история и рекорд") } }
-            }
-            state.plans.forEach { plan ->
-                Card(onClick = { vm.start(plan.id) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column { Text(plan.name, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text("${plan.exercises.size} упражнений", color = LocalPalette.current.muted) }
-                        Text("Начать →", color = LocalPalette.current.secondary)
+            val recommended = state.nextPlan
+            recommended?.let { plan ->
+                Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface), border = BorderStroke(1.dp, LocalPalette.current.accent.copy(alpha = .4f))) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("СЛЕДУЮЩАЯ ТРЕНИРОВКА", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            plan.exercises.firstOrNull()?.let { ExerciseArtwork(it.name, Modifier.size(56.dp)) }
+                            Column {
+                                Text(plan.name, color = LocalPalette.current.text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                Text(
+                                    plan.exercises.flatMap { verifiedGuideFor(it.name)?.primaryMuscles.orEmpty() }.distinct().joinToString(" · ") { it.compactLabel }
+                                        .ifBlank { "${plan.exercises.size} упражнений по плану" },
+                                    color = LocalPalette.current.muted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        PrimaryActionButton("Начать тренировку", { vm.start(plan.id) })
                     }
                 }
             }
+            Text("Другие тренировки", style = MaterialTheme.typography.titleMedium, color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+            state.plans.forEach { plan ->
+                if (plan.id == recommended?.id) return@forEach
+                Card(onClick = { vm.start(plan.id) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        plan.exercises.firstOrNull()?.let { ExerciseArtwork(it.name, Modifier.size(48.dp)) }
+                        Column(Modifier.weight(1f)) { Text(plan.name.removePrefix("Демо · "), fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text("${plan.exercises.size} упражнений", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall) }
+                        Text("Начать", color = LocalPalette.current.secondary, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            OutlinedButton(onClick = openCatalog, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Открыть каталог упражнений") }
         } else {
             val elapsed = ((System.currentTimeMillis() - session.startedAt) / 60000L).coerceAtLeast(0)
-            Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(session.planName, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
-                    Text("${elapsed} мин · ${session.completedSets}/${session.totalSets} рабочих подходов", color = LocalPalette.current.muted)
-                    OutlinedTextField(value = session.comment, onValueChange = { vm.updateComment(session.id, it) }, modifier = Modifier.fillMaxWidth(), label = { Text("Комментарий к тренировке") }, minLines = 2, maxLines = 4)
-                    LinearProgressIndicator(progress = { if (session.totalSets == 0) 0f else session.completedSets.toFloat() / session.totalSets }, modifier = Modifier.fillMaxWidth())
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { confirm("finish") }, modifier = Modifier.weight(1f)) { Text("Завершить") }
-                        OutlinedButton(onClick = { confirm("cancel") }, modifier = Modifier.weight(1f)) { Text("Отменить") }
-                    }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Упражнения ${session.exercises.count { exercise -> exercise.skipped || exercise.sets.any { it.done } }}/${session.exercises.size}", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+                    Text("Подходы ${session.completedSets}/${session.totalSets}", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
                 }
+                LinearProgressIndicator(progress = { if (session.totalSets == 0) 0f else session.completedSets.toFloat() / session.totalSets }, modifier = Modifier.fillMaxWidth().height(4.dp), color = LocalPalette.current.accent, trackColor = LocalPalette.current.surface)
+                OutlinedTextField(value = session.comment, onValueChange = { vm.updateComment(session.id, it) }, modifier = Modifier.fillMaxWidth(), label = { Text("Комментарий") }, singleLine = true)
+                Text("${elapsed} мин", color = LocalPalette.current.secondary, style = MaterialTheme.typography.labelSmall)
             }
             session.exercises.forEach { exercise ->
                 var expanded by rememberSaveable(session.id, exercise.id) { mutableStateOf(exercise.position == 0) }
-                Card(border = BorderStroke(1.dp, if (expanded) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = 0.2f)), colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { expanded = !expanded }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("${exercise.position + 1}. ${exercise.name} ${if (expanded) "⌃" else "⌄"}", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text) }
+                Card(border = BorderStroke(1.dp, if (expanded) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = 0.2f)), colors = CardDefaults.cardColors(containerColor = if (expanded) LocalPalette.current.accent.copy(alpha = .06f) else LocalPalette.current.surface)) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            ExerciseArtwork(exercise.name, Modifier.size(48.dp))
+                            Column(
+                                Modifier.weight(1f).clickable { expanded = !expanded }.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text("${exercise.position + 1}. ${exercise.name}", fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    verifiedGuideFor(exercise.name)?.primaryMuscles?.joinToString(" · ") { it.compactLabel } ?: "Группа не указана",
+                                    color = LocalPalette.current.muted,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            val arrowColor = LocalPalette.current.muted
+                            IconButton(
+                                onClick = { expanded = !expanded },
+                                modifier = Modifier.size(48.dp).semantics { contentDescription = if (expanded) "Свернуть ${exercise.name}" else "Развернуть ${exercise.name}" },
+                            ) {
+                                Canvas(Modifier.size(18.dp)) {
+                                    val top = if (expanded) size.height * .62f else size.height * .38f
+                                    val bottom = if (expanded) size.height * .38f else size.height * .62f
+                                    drawLine(arrowColor, Offset(size.width * .24f, top), Offset(size.width * .5f, bottom), 2.dp.toPx())
+                                    drawLine(arrowColor, Offset(size.width * .5f, bottom), Offset(size.width * .76f, top), 2.dp.toPx())
+                                }
+                            }
                             if (expanded) {
-                            TextButton(onClick = { vm.skipExercise(exercise.id, !exercise.skipped) }) { Text(if (exercise.skipped) "Вернуть" else "Пропустить") }
                             Box {
-                                TextButton(onClick = { replacementFor = exercise.id }) { Text("Замена") }
+                                IconButton(
+                                    onClick = { exerciseActionsFor = exercise.id },
+                                    modifier = Modifier.size(48.dp).semantics { contentDescription = "Действия для упражнения ${exercise.name}" },
+                                ) { NavigationGlyph(NavigationIcon.MORE) }
+                                DropdownMenu(expanded = exerciseActionsFor == exercise.id, onDismissRequest = { exerciseActionsFor = null }) {
+                                    DropdownMenuItem(text = { Text(if (exercise.skipped) "Вернуть" else "Пропустить") }, onClick = { vm.skipExercise(exercise.id, !exercise.skipped); exerciseActionsFor = null })
+                                    DropdownMenuItem(text = { Text("Заменить") }, onClick = { replacementFor = exercise.id; exerciseActionsFor = null })
+                                }
                                 DropdownMenu(expanded = replacementFor == exercise.id, onDismissRequest = { replacementFor = null }) {
                                     state.plans.flatMap { it.exercises }.distinctBy { it.name }.forEach { option ->
                                         DropdownMenuItem(text = { Text(option.name) }, onClick = { vm.replaceExercise(exercise.id, option); replacementFor = null })
@@ -539,12 +744,18 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
                             val prev = previous.sets.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}" }
                             if (prev.isNotBlank()) Text("Прошлый раз · $prev", style = MaterialTheme.typography.bodySmall, color = LocalPalette.current.muted)
                         }
-                        TextButton(onClick = { detailsFor = exercise.name }, modifier = Modifier.heightIn(min = 48.dp)) { Text("История и детали упражнения") }
+                        TextButton(onClick = { openExercise(exercise.name) }, modifier = Modifier.heightIn(min = 48.dp).testTag("exercise-details")) { Text("Открыть упражнение") }
                         if (exercise.skipped) Text("Упражнение пропущено", color = LocalPalette.current.muted)
-                        else exercise.sets.forEachIndexed { index, set ->
-                            SetEditor(index, set, vm, tick, exercise.tracksLoad, state.settings.weightUnit)
+                        else {
+                            Row(Modifier.fillMaxWidth().padding(start = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("№", Modifier.width(48.dp), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                Text("Вес, ${state.settings.weightUnit.label()}", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                Text("Повторы", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                Spacer(Modifier.width(48.dp)); Spacer(Modifier.width(48.dp))
+                            }
+                            exercise.sets.forEachIndexed { index, set -> SetEditor(index, set, vm, exercise.tracksLoad, state.settings.weightUnit) }
                         }
-                        if (!exercise.skipped) OutlinedButton(onClick = { vm.addSet(exercise.id) }, modifier = Modifier.fillMaxWidth()) { Text("＋ Добавить подход") }
+                        if (!exercise.skipped) OutlinedButton(onClick = { vm.addSet(exercise.id) }, modifier = Modifier.fillMaxWidth()) { Text("Добавить подход") }
                         }
                     }
                 }
@@ -552,101 +763,189 @@ private fun GymScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifi
         }
         Spacer(Modifier.height(8.dp))
     }
-    detailsFor?.let { name -> ExerciseDetailDialog(name, state, onDismiss = { detailsFor = null }) }
 }
 
-private data class ExerciseGuide(
+internal data class ExerciseGuide(
     val equipment: String,
-    val muscles: List<String>,
+    val primaryMuscles: List<ExerciseMuscleGroup>,
+    val secondaryMuscles: List<ExerciseMuscleGroup>,
     val steps: List<String>,
+    val sourceLabel: String,
     val sourceUrl: String,
+    val muscleSourceName: String,
 )
 
-private fun verifiedGuideFor(name: String): ExerciseGuide? {
+internal fun verifiedGuideFor(name: String): ExerciseGuide? {
     val key = name.lowercase(Locale.ROOT).replace('ё', 'е').replace(Regex("[^a-zа-я]+"), " ").trim()
-    if (key !in setOf("жим ногами", "жим ногами в тренажере", "seated leg press", "leg press")) return null
-    return ExerciseGuide(
-        equipment = "Силовой тренажёр",
-        muscles = listOf("Бёдра", "Ягодицы и таз"),
-        steps = listOf(
-            "Настрой сиденье так, чтобы стопы полностью стояли на платформе, а колени в исходном положении были примерно под прямым углом.",
-            "Прижми спину и таз к спинке; сохраняй это положение во время движения.",
-            "Плавно выжми платформу, не отрывая пятки; не переразгибай и не блокируй колени.",
-            "Контролируемо верни платформу, не прижимая бёдра к корпусу.",
-        ),
-        sourceUrl = "https://www.acefitness.org/resources/everyone/exercise-library/154/seated-leg-press/",
-    )
+    return when (key) {
+        "жим штанги средним хватом", "barbell bench press medium grip" -> ExerciseGuide(
+            equipment = "Штанга и горизонтальная скамья",
+            primaryMuscles = listOf(ExerciseMuscleGroup.CHEST),
+            secondaryMuscles = listOf(ExerciseMuscleGroup.TRICEPS, ExerciseMuscleGroup.SHOULDERS),
+            steps = listOf(
+                "Ляг на скамью, поставь стопы на пол и возьмись за гриф чуть шире плеч.",
+                "Сведи и опусти лопатки; удерживай корпус и стопы устойчиво.",
+                "Опускай гриф к середине груди, контролируя движение локтей.",
+                "Выжми гриф вверх до почти прямых рук, не отрывая лопатки от скамьи.",
+            ),
+            sourceLabel = "NASM · Barbell Bench Press",
+            sourceUrl = "https://www.nasm.org/resource-center/exercise-library/barbell-bench-press",
+            muscleSourceName = "Barbell Bench Press - Medium Grip",
+        )
+        "тяга верхнего блока широким хватом", "wide grip lat pulldown cable" -> ExerciseGuide(
+            equipment = "Верхний блок и широкий прямой гриф",
+            primaryMuscles = listOf(ExerciseMuscleGroup.LATS),
+            secondaryMuscles = listOf(ExerciseMuscleGroup.BICEPS, ExerciseMuscleGroup.MIDDLE_BACK, ExerciseMuscleGroup.SHOULDERS),
+            steps = listOf(
+                "Зафиксируй бёдра под валиками, поставь стопы на пол и возьмись за гриф широким хватом сверху.",
+                "Сохраняй устойчивое положение корпуса и опусти плечи от ушей.",
+                "Веди локти вниз к рёбрам и тяни гриф к верхней части груди.",
+                "Плавно верни гриф вверх, не раскачивая корпус и не пожимая плечами.",
+            ),
+            sourceLabel = "NASM · Lat Pulldown: хват и техника",
+            sourceUrl = "https://www.nasm.org/resource-center/blog/training/the-biomechanics-of-the-lat-pulldown-muscles-grip-and-form",
+            muscleSourceName = "Wide-Grip Lat Pulldown",
+        )
+        "приседания со штангой", "barbell squat" -> ExerciseGuide(
+            equipment = "Штанга и стойки",
+            primaryMuscles = listOf(ExerciseMuscleGroup.QUADRICEPS),
+            secondaryMuscles = listOf(ExerciseMuscleGroup.CALVES, ExerciseMuscleGroup.GLUTES, ExerciseMuscleGroup.HAMSTRINGS, ExerciseMuscleGroup.LOWER_BACK),
+            steps = listOf(
+                "Установи гриф на стойках чуть ниже уровня плеч и расположи его на верхней части спины.",
+                "Возьмись за гриф шире плеч, напряги корпус и отойди от стоек.",
+                "Отводи таз назад и опускайся, удерживая спину ровной и грудь поднятой.",
+                "Упрись всей стопой в пол и поднимись, разгибая таз и колени вместе.",
+            ),
+            sourceLabel = "ACE · Back Squat",
+            sourceUrl = "https://www.acefitness.org/resources/everyone/exercise-library/11/back-squat/",
+            muscleSourceName = "Barbell Squat",
+        )
+        "жим ногами", "leg press machine", "seated leg press" -> ExerciseGuide(
+            equipment = "Тренажёр для жима ногами",
+            primaryMuscles = listOf(ExerciseMuscleGroup.QUADRICEPS),
+            secondaryMuscles = listOf(ExerciseMuscleGroup.CALVES, ExerciseMuscleGroup.GLUTES, ExerciseMuscleGroup.HAMSTRINGS),
+            steps = listOf(
+                "Настрой сиденье так, чтобы стопы полностью стояли на платформе, а колени в исходном положении были примерно под прямым углом.",
+                "Прижми спину и таз к спинке; сохраняй это положение во время движения.",
+                "Плавно выжми платформу, не отрывая пятки; не переразгибай и не блокируй колени.",
+                "Контролируемо верни платформу, не прижимая бёдра к корпусу.",
+            ),
+            sourceLabel = "ACE · Seated Leg Press",
+            sourceUrl = "https://www.acefitness.org/resources/everyone/exercise-library/154/seated-leg-press/",
+            muscleSourceName = "Leg Press",
+        )
+        "тяга нижнего блока узким хватом", "seated cable rows" -> ExerciseGuide(
+            equipment = "Нижний блок и рукоять узким хватом",
+            primaryMuscles = listOf(ExerciseMuscleGroup.MIDDLE_BACK),
+            secondaryMuscles = listOf(ExerciseMuscleGroup.BICEPS, ExerciseMuscleGroup.LATS, ExerciseMuscleGroup.SHOULDERS),
+            steps = listOf(
+                "Сядь лицом к блоку, поставь стопы на платформу и возьмись за рукоять нейтральным хватом.",
+                "Сохраняй ровное положение спины и устойчивый корпус.",
+                "Веди локти назад вдоль корпуса и тяни рукоять к нижней части рёбер.",
+                "Плавно выпрями руки, не округляя спину и не раскачиваясь.",
+            ),
+            sourceLabel = "NASM · Seated Machine Row, Close Grip",
+            sourceUrl = "https://www.nasm.org/resource-center/exercise-library/seated-machine-row-close-grip",
+            muscleSourceName = "Seated Cable Rows",
+        )
+        "попеременные молотки с гантелями", "alternate hammer curl dumbbells alternating" -> ExerciseGuide(
+            equipment = "Пара гантелей",
+            primaryMuscles = listOf(ExerciseMuscleGroup.BICEPS),
+            secondaryMuscles = listOf(ExerciseMuscleGroup.FOREARMS),
+            steps = listOf(
+                "Встань устойчиво, держи гантели у бёдер нейтральным хватом: ладони обращены друг к другу.",
+                "Сохраняя локти около корпуса и запястья ровными, согни одну руку.",
+                "Подними гантель без раскачивания туловища.",
+                "Медленно опусти её и повтори другой рукой.",
+            ),
+            sourceLabel = "ACE · Hammer Curl",
+            sourceUrl = "https://www.acefitness.org/resources/everyone/exercise-library/10/hammer-curl/",
+            muscleSourceName = "Alternate Hammer Curl",
+        )
+        else -> null
+    }
 }
 
 @Composable
-private fun ExerciseDetailDialog(name: String, state: DiarySnapshot, onDismiss: () -> Unit) {
+private fun ExerciseDetailScreen(name: String, state: DiarySnapshot, vm: DiaryViewModel, tick: Long, modifier: Modifier, onBack: () -> Unit, openSession: (String) -> Unit) {
     var selectedTab by rememberSaveable(name) { mutableIntStateOf(0) }
+    val detailScrollState = rememberScrollState()
+    LaunchedEffect(selectedTab) { detailScrollState.scrollTo(0) }
     val guide = remember(name) { verifiedGuideFor(name) }
     val related = state.history.flatMap { session ->
         session.exercises.filter { it.name == name && !it.skipped && it.tracksLoad }.map { session to it }
     }.sortedByDescending { it.first.endedAt ?: it.first.startedAt }
     val workingSets = related.flatMap { it.second.sets }.filter { it.done && !it.skipped && it.kind == SetKind.WORK }
-    val record = workingSets.mapNotNull { parseFiniteWeight(it.weight)?.takeIf { weight -> weight > 0.0 } }.maxOrNull()
+    val recordEntry = related.flatMap { (session, item) -> item.sets.filter { it.done && !it.skipped && it.kind == SetKind.WORK }.mapNotNull { set -> parseFiniteWeight(set.weight)?.takeIf { it > 0.0 }?.let { it to session.id } } }.maxByOrNull { it.first }
+    val record = recordEntry?.first
     val context = LocalContext.current
+    val activeExercise = state.activeSession?.exercises?.firstOrNull { it.name == name }
 
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(.9f).padding(12.dp),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = LocalPalette.current.background,
-            tonalElevation = 8.dp,
-        ) {
+        Surface(modifier = modifier.fillMaxSize(), color = LocalPalette.current.background) {
             Column {
-                Row(Modifier.fillMaxWidth().padding(start = 20.dp, top = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
-                        Text(guide?.let { "${it.equipment} · проверенная справка" } ?: "История и рабочие веса", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Закрыть") }
-                }
-                TabRow(selectedTabIndex = selectedTab) {
-                    listOf("Сводка", "Техника", "Мышцы").forEachIndexed { index, title ->
-                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title) })
+                TabRow(selectedTabIndex = selectedTab, containerColor = LocalPalette.current.background) {
+                    listOf("Подходы", "Техника", "Мышцы").forEachIndexed { index, title ->
+                        val tag = listOf("tab-sets", "tab-technique", "tab-muscles")[index]
+                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, modifier = Modifier.testTag(tag), text = { Text(title) })
                     }
                 }
                 Column(
-                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                    Modifier.weight(1f).verticalScroll(detailScrollState).padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     when (selectedTab) {
                         0 -> {
-                            if (guide != null) ExerciseGuideIllustration()
-                            else ExerciseMediaPlaceholder("Иллюстрация упражнения ещё не добавлена")
-                            Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-                                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("Личный рекорд", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
-                                    Text(record?.let { formatWeight(it, state.settings.weightUnit) } ?: "Нет завершённых рабочих подходов", color = LocalPalette.current.secondary, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                                    if (workingSets.isNotEmpty()) {
-                                        HorizontalDivider()
-                                        Text("Изменение рабочего веса", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
-                                        TrendGraph(state.history, name, null, ProgressMetric.MAX_WEIGHT, state.settings.weightUnit, height = 130.dp)
-                                    } else Text("График появится после завершённого рабочего подхода с весом.", color = LocalPalette.current.muted)
+                            ExerciseArtwork(name, Modifier.fillMaxWidth().height(190.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Card(Modifier.weight(1f).clickable(enabled = related.isNotEmpty()) { related.firstOrNull()?.first?.id?.let(openSession) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Прошлый раз", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+                                        val (session, item) = related.firstOrNull() ?: (null to null)
+                                        Text(session?.let { date(it.endedAt ?: it.startedAt) } ?: "Нет данных", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                                        Text(item?.sets?.filter { it.done && !it.skipped && it.kind == SetKind.WORK }?.joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit)}×${it.reps}" } ?: "", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                    }
                                 }
-                            }
-                            Text("Последние тренировки", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = LocalPalette.current.text)
-                            if (related.isEmpty()) Text("Пока нет записей по этому упражнению.", color = LocalPalette.current.muted)
-                            related.take(5).forEach { (session, item) ->
-                                val sets = item.sets.filter { it.done && !it.skipped && it.kind == SetKind.WORK }
-                                    .joinToString(" · ") { "${displayWeight(it.weight, state.settings.weightUnit).ifBlank { "—" }} × ${it.reps.ifBlank { "—" }}" }
-                                Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-                                    Column(Modifier.fillMaxWidth().padding(14.dp)) {
-                                        Text(date(session.endedAt ?: session.startedAt), color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
-                                        Text(sets.ifBlank { "Нет завершённых рабочих подходов" }, color = LocalPalette.current.muted)
+                                Card(Modifier.weight(1f).clickable(enabled = recordEntry != null) { recordEntry?.second?.let(openSession) }, colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+                                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("Личный рекорд", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelMedium)
+                                        Text(record?.let { formatWeight(it, state.settings.weightUnit) } ?: "—", color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge)
+                                        Text("по завершённым подходам", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             }
+                            if (activeExercise != null) {
+                                Text("Текущие подходы", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text("№", Modifier.width(48.dp), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                    Text("Вес, ${state.settings.weightUnit.label()}", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                    Text("Повторы", Modifier.weight(1f), color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                    Spacer(Modifier.width(48.dp)); Spacer(Modifier.width(48.dp))
+                                }
+                                activeExercise.sets.forEachIndexed { index, set -> SetEditor(index, set, vm, activeExercise.tracksLoad, state.settings.weightUnit) }
+                                OutlinedButton(onClick = { vm.addSet(activeExercise.id) }, modifier = Modifier.fillMaxWidth()) { Text("Добавить подход") }
+                            } else {
+                                related.firstOrNull()?.let { (_, latest) ->
+                                    Text("Подходы прошлого выполнения", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                                    latest.sets.filter { it.done && !it.skipped }.forEachIndexed { index, set ->
+                                        Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text("${index + 1}", Modifier.width(48.dp), color = LocalPalette.current.muted)
+                                            Text(displayWeight(set.weight, state.settings.weightUnit).ifBlank { "—" }, Modifier.weight(1f), color = LocalPalette.current.text)
+                                            Text(set.reps.ifBlank { "—" }, Modifier.weight(1f), color = LocalPalette.current.text)
+                                            Text(if (set.kind == SetKind.WORK) "Рабочий" else "Разминка", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                                val plan = state.plans.firstOrNull { p -> p.exercises.any { it.name == name } }
+                                if (plan != null) PrimaryActionButton("Начать тренировку", { vm.start(plan.id) })
+                            }
                         }
                         1 -> {
+                            ExerciseTechniqueMedia(name, Modifier.fillMaxWidth())
                             if (guide == null) {
-                                ExerciseMediaPlaceholder("Техника для этого упражнения пока не проверена")
-                                Text("Покажем инструкцию и видео после добавления проверенного материала в каталог.", color = LocalPalette.current.muted)
+                                Text("Техника для этого варианта пока не проверена", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                                Text("Фотографии помогают узнать упражнение, но не заменяют проверенную инструкцию. Для этого варианта шаги пока не добавлены.", color = LocalPalette.current.muted)
                             } else {
-                                ExerciseGuideIllustration()
+                                Text(guide.equipment, color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                                 Text("Техника выполнения", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
                                 guide.steps.forEachIndexed { index, step ->
                                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
@@ -656,8 +955,18 @@ private fun ExerciseDetailDialog(name: String, state: DiarySnapshot, onDismiss: 
                                         Text(step, Modifier.weight(1f), color = LocalPalette.current.text)
                                     }
                                 }
-                                Text("Справка: ACE Fitness · seated leg press", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(guide.sourceUrl))) } }) { Text("Открыть источник ACE Fitness") }
+                                Card(
+                                    Modifier.fillMaxWidth().clickable { selectedTab = 2 },
+                                    colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface),
+                                ) {
+                                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("Целевые мышцы · открыть карту", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
+                                        Text(guide.primaryMuscles.joinToString(" · ") { it.label }, color = LocalPalette.current.secondary)
+                                        if (guide.secondaryMuscles.isNotEmpty()) Text("Также работают: ${guide.secondaryMuscles.joinToString(" · ") { it.label }}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                                Text("Инструкция подготовлена по материалу ${guide.sourceLabel}.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(guide.sourceUrl))) } }) { Text("Источник: ${guide.sourceLabel}") }
                             }
                         }
                         else -> {
@@ -665,27 +974,40 @@ private fun ExerciseDetailDialog(name: String, state: DiarySnapshot, onDismiss: 
                                 ExerciseMediaPlaceholder("Карта мышц не добавлена")
                                 Text("Не определяем группы мышц по одному только названию упражнения.", color = LocalPalette.current.muted)
                             } else {
-                                MuscleMapIllustration()
-                                Text("Основные группы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    guide.muscles.forEach { group ->
-                                        Surface(shape = CircleShape, color = LocalPalette.current.surface) {
-                                            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                Box(Modifier.size(8.dp).background(LocalPalette.current.accent, CircleShape))
-                                                Text(group, color = LocalPalette.current.text, style = MaterialTheme.typography.labelLarge)
-                                            }
+                                ExerciseMuscleMap(
+                                    primary = guide.primaryMuscles,
+                                    secondary = guide.secondaryMuscles,
+                                    primaryColor = LocalPalette.current.accent,
+                                    secondaryColor = LocalPalette.current.secondary,
+                                    modifier = Modifier.fillMaxWidth().testTag("muscle-map"),
+                                )
+                                Text("Основная нагрузка", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                                guide.primaryMuscles.forEach { group ->
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(Modifier.size(8.dp).background(LocalPalette.current.accent, CircleShape))
+                                        Text(group.label, color = LocalPalette.current.text, style = MaterialTheme.typography.bodyLarge)
+                                    }
+                                }
+                                if (guide.secondaryMuscles.isNotEmpty()) {
+                                    Text("Дополнительно", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                                    guide.secondaryMuscles.forEach { group ->
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Box(Modifier.size(8.dp).background(LocalPalette.current.secondary, CircleShape))
+                                            Text(group.label, color = LocalPalette.current.text, style = MaterialTheme.typography.bodyLarge)
                                         }
                                     }
                                 }
-                                Text("Группы указаны в справочнике ACE Fitness для seated leg press.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-                                TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(guide.sourceUrl))) } }) { Text("Открыть источник ACE Fitness") }
+                                Text("Зоны на карте — группы из источника упражнения; схема показывает их расположение, а не точную биомеханику.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                                TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/yuhonas/free-exercise-db/blob/main/dist/exercises.json"))) } }) {
+                                    Text("Мышцы: Free Exercise DB · ${guide.muscleSourceName}")
+                                }
+                                Text("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
                 }
             }
         }
-    }
 }
 
 @Composable
@@ -707,94 +1029,52 @@ private fun ExerciseMediaPlaceholder(label: String) {
 }
 
 @Composable
-private fun ExerciseGuideIllustration() {
-    val accent = LocalPalette.current.accent
-    val muted = LocalPalette.current.muted
-    Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Схема движения · жим ногами", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
-            Canvas(Modifier.fillMaxWidth().height(156.dp)) {
-                val thick = 5.dp.toPx()
-                fun line(a: Pair<Float, Float>, b: Pair<Float, Float>, color: Color = muted, width: Float = thick) {
-                    drawLine(color, androidx.compose.ui.geometry.Offset(size.width * a.first, size.height * a.second), androidx.compose.ui.geometry.Offset(size.width * b.first, size.height * b.second), width, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                }
-                // Equipment outline and a simplified, non-anatomical movement path.
-                line(.16f to .84f, .85f to .84f)
-                line(.22f to .78f, .39f to .34f)
-                line(.39f to .34f, .48f to .66f)
-                line(.45f to .62f, .66f to .62f)
-                line(.44f to .67f, .68f to .67f)
-                line(.49f to .62f, .60f to .48f, accent, thick * 1.4f)
-                line(.60f to .48f, .69f to .37f, accent, thick * 1.4f)
-                line(.63f to .47f, .77f to .24f, accent, thick * 1.4f)
-                line(.77f to .24f, .88f to .24f, accent, thick)
-                line(.78f to .17f, .78f to .32f, accent, thick)
-                line(.85f to .17f, .85f to .32f, accent, thick)
-                line(.72f to .42f, .82f to .34f, accent, thick * .8f)
-                drawCircle(muted, radius = 9.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width * .46f, size.height * .52f))
-            }
-            Text("Тренажёр и направление выжимания", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun MuscleMapIllustration() {
-    val accent = LocalPalette.current.accent
-    val muted = LocalPalette.current.muted
-    Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Зоны, отмеченные в справочнике", color = LocalPalette.current.text, fontWeight = FontWeight.SemiBold)
-            Canvas(Modifier.fillMaxWidth().height(188.dp)) {
-                val centerX = size.width / 2f
-                val scale = size.height
-                val thin = 3.dp.toPx()
-                drawCircle(muted.copy(alpha = .6f), radius = scale * .065f, center = androidx.compose.ui.geometry.Offset(centerX, scale * .15f), style = androidx.compose.ui.graphics.drawscope.Stroke(thin))
-                fun line(x1: Float, y1: Float, x2: Float, y2: Float, color: Color = muted, width: Float = thin) = drawLine(color, androidx.compose.ui.geometry.Offset(centerX + scale * x1, scale * y1), androidx.compose.ui.geometry.Offset(centerX + scale * x2, scale * y2), width, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-                line(-.1f, .26f, .1f, .26f); line(-.1f, .26f, -.18f, .47f); line(.1f, .26f, .18f, .47f)
-                line(-.1f, .26f, -.09f, .5f); line(.1f, .26f, .09f, .5f)
-                line(-.18f, .47f, .18f, .47f, accent, 9.dp.toPx())
-                line(-.09f, .5f, -.11f, .76f, accent, 8.dp.toPx()); line(.09f, .5f, .11f, .76f, accent, 8.dp.toPx())
-                line(-.11f, .76f, -.12f, .94f); line(.11f, .76f, .12f, .94f)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(Modifier.size(10.dp), shape = CircleShape, color = accent) {}
-                Text("Бёдра · ягодицы и таз", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tick: Long, tracksLoad: Boolean, unit: WeightUnit) {
+private fun SetEditor(index: Int, set: TrainingSet, vm: DiaryViewModel, tracksLoad: Boolean, unit: WeightUnit) {
     var weight by remember(set.id, set.weight, unit) { mutableStateOf(displayWeight(set.weight, unit)) }
     var reps by remember(set.id) { mutableStateOf(set.reps) }
-    val seconds = set.restUntil?.let { ((it - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0) } ?: (set.restRemaining / 1000).toInt()
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("${index + 1}", color = LocalPalette.current.muted, modifier = Modifier.width(20.dp))
-            if (tracksLoad) {
-                OutlinedTextField(weight, { weight = it.filter { c -> c.isDigit() || c == '.' || c == ',' }.take(8); vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }, Modifier.weight(1f), label = { Text("Вес, ${unit.label()}") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedTextField(reps, { reps = it.filter(Char::isDigit).take(4); vm.updateSet(set.id, reps = reps) }, Modifier.weight(1f), label = { Text("Повторы") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            } else Text("Без силовой нагрузки", Modifier.weight(2f), color = LocalPalette.current.muted)
-            Checkbox(checked = set.done, onCheckedChange = { vm.toggleSet(set) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Отметить подход ${index + 1}" })
+    var menu by remember { mutableStateOf(false) }
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).background(if (index % 2 == 0) LocalPalette.current.background.copy(alpha = .45f) else Color.Transparent, MaterialTheme.shapes.small), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.width(48.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Text("${index + 1}", color = LocalPalette.current.text, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+            if (set.kind == SetKind.WARMUP) Text("Р", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            FilterChip(selected = set.kind == SetKind.WORK, onClick = { vm.setKind(set.id, if (set.kind == SetKind.WORK) SetKind.WARMUP else SetKind.WORK) }, label = { Text(if (set.kind == SetKind.WORK) "Рабочий" else "Разминочный") })
-            if (seconds > 0) Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Отдых ${seconds / 60}:${(seconds % 60).toString().padStart(2, '0')}", color = LocalPalette.current.secondary)
-                TextButton(onClick = { if (set.restUntil != null) vm.pauseRest(set.id) else vm.resumeRest(set.id) }) { Text(if (set.restUntil != null) "Пауза" else "Продолжить") }
-                TextButton(onClick = { vm.skipRest(set.id) }) { Text("Пропустить") }
+        if (tracksLoad) {
+            CompactNumberField(weight, "Вес ${unit.label()}", Modifier.weight(1f), KeyboardType.Decimal) { weight = it; vm.updateSet(set.id, weight = canonicalWeight(weight, unit)) }
+            CompactNumberField(reps, "Повторы", Modifier.weight(1f), KeyboardType.Number) { reps = it; vm.updateSet(set.id, reps = reps) }
+        } else Text("—", Modifier.weight(2f), color = LocalPalette.current.muted)
+        Checkbox(checked = set.done, onCheckedChange = { vm.toggleSet(set) }, modifier = Modifier.size(48.dp).semantics { contentDescription = "Отметить подход ${index + 1}" })
+        Box {
+            IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp)) { NavigationGlyph(NavigationIcon.MORE) }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(if (set.kind == SetKind.WORK) "Отметить разминкой" else "Отметить рабочим") }, onClick = { vm.setKind(set.id, if (set.kind == SetKind.WORK) SetKind.WARMUP else SetKind.WORK); menu = false })
+                DropdownMenuItem(text = { Text("Удалить подход") }, onClick = { vm.removeSet(set.id); menu = false })
             }
-            TextButton(onClick = { vm.removeSet(set.id) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Удалить") }
         }
     }
-    tick.hashCode()
 }
 
 @Composable
-private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier) {
+private fun CompactNumberField(value: String, label: String, modifier: Modifier, keyboardType: KeyboardType, onValueChange: (String) -> Unit) {
+    Surface(modifier.heightIn(min = 40.dp), shape = MaterialTheme.shapes.small, color = LocalPalette.current.background, border = BorderStroke(1.dp, LocalPalette.current.muted.copy(alpha = .25f))) {
+        Box(contentAlignment = Alignment.Center) {
+            if (value.isEmpty()) Text(label, color = LocalPalette.current.muted.copy(alpha = .7f), style = MaterialTheme.typography.labelSmall)
+            BasicTextField(
+                value = value,
+                onValueChange = { next -> onValueChange(next.filter { it.isDigit() || (keyboardType == KeyboardType.Decimal && (it == '.' || it == ',')) }.take(if (keyboardType == KeyboardType.Decimal) 8 else 4)) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp).semantics { contentDescription = label },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = LocalPalette.current.text, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = FontWeight.SemiBold),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, openCatalog: (String) -> Unit, openExercise: (String) -> Unit) {
     val cyclePositions = state.plans.filter { it.inCycle }.mapIndexed { index, plan -> plan.id to index + 1 }.toMap()
+    var selectedPlanId by rememberSaveable { mutableStateOf(state.nextPlan?.id ?: state.plans.firstOrNull()?.id) }
+    val selectedPlan = state.plans.firstOrNull { it.id == selectedPlanId } ?: state.nextPlan ?: state.plans.firstOrNull()
     var addToPlan by remember { mutableStateOf<TrainingPlan?>(null) }
     var exerciseName by remember { mutableStateOf("") }
     var createPlan by remember { mutableStateOf(false) }
@@ -802,9 +1082,16 @@ private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
     var deletePlan by remember { mutableStateOf<TrainingPlan?>(null) }
     var editExercise by remember { mutableStateOf<Pair<TrainingPlan, PlanExercise>?>(null) }
     var removeExercise by remember { mutableStateOf<Pair<TrainingPlan, PlanExercise>?>(null) }
+    var exerciseActionsFor by remember { mutableStateOf<String?>(null) }
     ScreenColumn(modifier) {
         ScreenTitle("План", "Создавай шаблоны и настраивай тренировочный цикл")
-        Button(onClick = { createPlan = true }, modifier = Modifier.fillMaxWidth()) { Text("＋ Создать тренировку") }
+        Button(onClick = { createPlan = true }, modifier = Modifier.fillMaxWidth()) { Text("Создать тренировку") }
+        if (state.plans.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            state.plans.sortedBy { it.position }.forEach { plan ->
+                val selected = selectedPlan?.id == plan.id
+                            FilterChip(selected = selected, onClick = { selectedPlanId = plan.id }, label = { Text(if (plan.inCycle) "${cyclePositions[plan.id]}. ${plan.name.removePrefix("Демо · ")}" else plan.name.removePrefix("Демо · "), maxLines = 1) })
+            }
+        }
         if (state.plans.isEmpty()) {
             Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -814,37 +1101,50 @@ private fun PlanScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modif
                 }
             }
         }
-        state.plans.forEach { plan ->
+        selectedPlan?.let { plan ->
             Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) { Text(plan.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text(if (plan.inCycle) "${cyclePositions[plan.id]} · в цикле" else "вне цикла", color = LocalPalette.current.muted) }
-                        TextButton(onClick = { vm.movePlan(plan.id, -1) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) { Text("↑") }
-                        TextButton(onClick = { vm.movePlan(plan.id, 1) }, modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)) { Text("↓") }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-                        TextButton(onClick = { renamePlan = plan }) { Text("Переименовать") }
-                        TextButton(onClick = { vm.duplicatePlan(plan.id) }) { Text("Дублировать") }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-                        TextButton(onClick = { vm.setPlanInCycle(plan.id, !plan.inCycle) }) { Text(if (plan.inCycle) "Убрать из цикла" else "В цикл") }
-                        TextButton(onClick = { deletePlan = plan }, enabled = state.activeSession?.planId != plan.id) { Text("Удалить") }
-                    }
-                    plan.exercises.forEachIndexed { index, exercise ->
-                        Column {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text("${index + 1}. ${exercise.name}", Modifier.weight(1f), color = LocalPalette.current.text)
-                                TextButton(onClick = { editExercise = plan to exercise }) { Text("Изм.") }
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TextButton(onClick = { vm.moveExercise(exercise.id, plan.id, -1) }) { Text("↑ Выше") }
-                                TextButton(onClick = { vm.moveExercise(exercise.id, plan.id, 1) }) { Text("↓ Ниже") }
-                                TextButton(onClick = { removeExercise = plan to exercise }) { Text("Удалить") }
+                        Column(Modifier.weight(1f)) { Text(plan.name.removePrefix("Демо · "), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text(if (plan.inCycle) "${cyclePositions[plan.id]} · в цикле" else "Вне цикла", color = LocalPalette.current.muted) }
+                        Box {
+                            var menu by remember(plan.id) { mutableStateOf(false) }
+                            IconButton(onClick = { menu = true }) { NavigationGlyph(NavigationIcon.MORE) }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(text = { Text("Поднять в цикле") }, onClick = { vm.movePlan(plan.id, -1); menu = false })
+                                DropdownMenuItem(text = { Text("Опустить в цикле") }, onClick = { vm.movePlan(plan.id, 1); menu = false })
+                                DropdownMenuItem(text = { Text("Переименовать") }, onClick = { renamePlan = plan; menu = false })
+                                DropdownMenuItem(text = { Text("Дублировать") }, onClick = { vm.duplicatePlan(plan.id); menu = false })
+                                DropdownMenuItem(text = { Text(if (plan.inCycle) "Убрать из цикла" else "В цикл") }, onClick = { vm.setPlanInCycle(plan.id, !plan.inCycle); menu = false })
+                                DropdownMenuItem(text = { Text("Удалить") }, enabled = state.activeSession?.planId != plan.id, onClick = { deletePlan = plan; menu = false })
                             }
                         }
-                        Text("${exercise.plannedSets} подхода · ${displayWeight(exercise.targetWeight, state.settings.weightUnit).ifBlank { "вес не задан" }}${if (exercise.targetReps.isBlank()) "" else " × ${exercise.targetReps}"} · отдых ${exercise.restSeconds} с", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
                     }
-                    OutlinedButton(onClick = { addToPlan = plan; exerciseName = "" }, modifier = Modifier.fillMaxWidth()) { Text("＋ Добавить упражнение") }
+                    plan.exercises.forEachIndexed { index, exercise ->
+                        Box {
+                            CompactPlanExerciseRow(
+                                exercise = exercise,
+                                position = index + 1,
+                                groupLabel = verifiedGuideFor(exercise.name)?.primaryMuscles?.joinToString(" · ") { it.compactLabel }.orEmpty(),
+                                summary = "${exercise.plannedSets}×${exercise.targetReps.ifBlank { "—" }} · ${displayWeight(exercise.targetWeight, state.settings.weightUnit).ifBlank { "без веса" }}",
+                                onOpen = { openExercise(exercise.name) },
+                                onMove = { exerciseActionsFor = exercise.id },
+                                onMenu = { exerciseActionsFor = exercise.id },
+                            )
+                            DropdownMenu(
+                                expanded = exerciseActionsFor == exercise.id,
+                                onDismissRequest = { exerciseActionsFor = null },
+                            ) {
+                                DropdownMenuItem(text = { Text("Выше") }, enabled = index > 0, onClick = { vm.moveExercise(exercise.id, plan.id, -1); exerciseActionsFor = null })
+                                DropdownMenuItem(text = { Text("Ниже") }, enabled = index < plan.exercises.lastIndex, onClick = { vm.moveExercise(exercise.id, plan.id, 1); exerciseActionsFor = null })
+                                DropdownMenuItem(text = { Text("Изменить") }, onClick = { editExercise = plan to exercise; exerciseActionsFor = null })
+                                DropdownMenuItem(text = { Text("Удалить") }, onClick = { removeExercise = plan to exercise; exerciseActionsFor = null })
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { openCatalog(plan.id) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Каталог") }
+                        OutlinedButton(onClick = { addToPlan = plan; exerciseName = "" }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Ввести вручную") }
+                    }
                 }
             }
         }
@@ -899,6 +1199,7 @@ private fun ExercisePlanDialog(exercise: PlanExercise, unit: WeightUnit, onDismi
 private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modifier, incomingUri: Uri?, onIncomingConsumed: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showExchange by rememberSaveable { mutableStateOf(false) }
     var status by remember { mutableStateOf("") }
     var exchangePreview by remember { mutableStateOf<ExchangePreview?>(null) }
     var exchangeFile by remember { mutableStateOf<ByteArray?>(null) }
@@ -1007,8 +1308,21 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Цветовая схема", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
-                DiaryTheme.entries.forEach { theme ->
-                    FilterChip(selected = state.settings.theme == theme, onClick = { vm.setTheme(theme) }, label = { Text(theme.title()) })
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DiaryTheme.entries.forEach { theme ->
+                        val selected = state.settings.theme == theme
+                        val preview = paletteFor(theme)
+                        Surface(onClick = { vm.setTheme(theme) }, shape = MaterialTheme.shapes.medium, color = preview.background, border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) LocalPalette.current.accent else LocalPalette.current.muted.copy(alpha = .35f))) {
+                            Column(Modifier.width(112.dp).heightIn(min = 90.dp).padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Box(Modifier.size(22.dp).background(preview.surface, CircleShape))
+                                    Box(Modifier.size(22.dp).background(preview.accent, CircleShape))
+                                    Box(Modifier.size(22.dp).background(preview.secondary, CircleShape))
+                                }
+                                Text(theme.title(), color = preview.text, style = MaterialTheme.typography.labelMedium, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 2)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1020,6 +1334,11 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
         }
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { showExchange = !showExchange }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column { Text("Обмен и связи", color = LocalPalette.current.text, fontWeight = FontWeight.Bold); Text("Вторичные операции с данными", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall) }
+                    Text(if (showExchange) "Скрыть" else "Открыть", color = LocalPalette.current.secondary)
+                }
+                if (showExchange) {
                 Text("Защищённый обмен", color = LocalPalette.current.text, fontWeight = FontWeight.Bold)
                 Text("Устройства связываются через файл приглашения. Перед подтверждением сравните отпечаток по независимому каналу.", color = LocalPalette.current.muted)
                 Text("Для пересылки через бота откройте его личный чат на обоих устройствах и отправьте туда файл регистрации каждой доверенной связи.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
@@ -1053,6 +1372,7 @@ private fun SettingsScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: M
                 }
                 if (status.isNotBlank()) Text(status, color = LocalPalette.current.secondary)
                 exchangeError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
@@ -1213,190 +1533,71 @@ private fun shareExchangeUri(context: android.content.Context, uri: Uri, mime: S
 }
 
 @Composable
-private fun HistoryScreen(history: List<TrainingSession>, unit: WeightUnit, targetId: String?, clearTarget: () -> Unit, modifier: Modifier, canSend: Boolean, resend: (String) -> Unit) {
+private fun HistoryScreen(history: List<TrainingSession>, unit: WeightUnit, targetId: String?, clearTarget: () -> Unit, modifier: Modifier, canSend: Boolean, resend: (String) -> Unit, openExercise: (String) -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var period by rememberSaveable { mutableStateOf("Всё время") }
+    val periodDays = when (period) { "7 дней" -> 7; "Месяц" -> 30; else -> null }
+    val since = periodDays?.let { System.currentTimeMillis() - it * 86_400_000L }
+    val filtered = history.filter { session ->
+        val dateValue = session.endedAt ?: session.startedAt
+        (since == null || dateValue >= since) && (query.isBlank() || session.planName.contains(query.trim(), true) || session.exercises.any { it.name.contains(query.trim(), true) })
+    }
     ScreenColumn(modifier) {
         ScreenTitle("История", "Завершённые тренировки")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("7 дней", "Месяц", "Всё время").forEach { value -> FilterChip(selected = period == value, onClick = { period = value }, label = { Text(value) }) }
+        }
+        OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("Поиск тренировок и упражнений") }, singleLine = true)
         if (history.isEmpty()) Text("История появится после завершения тренировки.", color = LocalPalette.current.muted)
         targetId?.let { id ->
             history.firstOrNull { it.id == id }?.let { session ->
                 Text("Тренировка из графика", color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold)
-                SessionHistoryCard(session, unit, canSend) { resend(session.id) }
+                SessionHistoryCard(session, unit, canSend, { resend(session.id) }, openExercise)
                 TextButton(onClick = clearTarget, modifier = Modifier.heightIn(min = 48.dp)) { Text("Показать всю историю") }
             }
         }
-        history.filter { it.id != targetId }.forEach { session -> SessionHistoryCard(session, unit, canSend) { resend(session.id) } }
+        filtered.filter { it.id != targetId }.groupBy { session -> SimpleDateFormat("LLLL yyyy", Locale.forLanguageTag("ru")).format(Date(session.endedAt ?: session.startedAt)).replaceFirstChar { it.titlecase(Locale.forLanguageTag("ru")) } }.forEach { (month, sessions) ->
+            Text(month, color = LocalPalette.current.text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            sessions.forEach { session -> SessionHistoryCard(session, unit, canSend, { resend(session.id) }, openExercise) }
+        }
     }
 }
 
 @Composable
-private fun SessionHistoryCard(session: TrainingSession, unit: WeightUnit, canSend: Boolean = false, resend: () -> Unit = {}) {
-            Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(session.planName, fontWeight = FontWeight.Bold, color = LocalPalette.current.text); Text("Макс. вес ${session.maxWeightKg?.let { formatWeight(it, unit) } ?: "—"}", color = LocalPalette.current.secondary) }
-                    val duration = if (session.comment.contains("время и длительность неизвестны")) "длительность не указана" else "${((session.endedAt ?: session.startedAt) - session.startedAt).coerceAtLeast(0) / 60000L} мин"
-                    Text("${date(session.startedAt)} · $duration · ${session.exercises.size} упражнений · ${session.completedSets} рабочих подходов", color = LocalPalette.current.muted)
-                    if (session.comment.isNotBlank()) Text(session.comment, color = LocalPalette.current.secondary)
-                    if (canSend) OutlinedButton(onClick = resend, modifier = Modifier.fillMaxWidth()) { Text("Повторно подготовить PDF и пакет") }
-                    session.exercises.forEach { exercise ->
-                        val sets = exercise.sets.filter { it.done || it.skipped }.joinToString(" · ") {
-                            when {
-                                it.skipped -> "пропуск"
-                                else -> "${if (it.kind == SetKind.WARMUP) "разминка " else ""}${displayWeight(it.weight, unit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}"
-                            }
+private fun SessionHistoryCard(session: TrainingSession, unit: WeightUnit, canSend: Boolean = false, resend: () -> Unit = {}, openExercise: (String) -> Unit = {}) {
+    var expanded by rememberSaveable(session.id) { mutableStateOf(false) }
+    Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(session.planName, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
+                    Text("${date(session.endedAt ?: session.startedAt)} · ${session.completedSets} рабочих подходов", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text(session.maxWeightKg?.let { formatWeight(it, unit) } ?: "—", color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold)
+            }
+            if (expanded) {
+                val duration = if (session.comment.contains("время и длительность неизвестны")) "длительность не указана" else "${((session.endedAt ?: session.startedAt) - session.startedAt).coerceAtLeast(0) / 60000L} мин"
+                Text("$duration · ${session.exercises.size} упражнений", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                if (session.comment.isNotBlank()) Text(session.comment, color = LocalPalette.current.secondary)
+                if (canSend) OutlinedButton(onClick = resend, modifier = Modifier.fillMaxWidth()) { Text("Повторно подготовить PDF и пакет") }
+                session.exercises.forEach { exercise ->
+                    val sets = exercise.sets.filter { it.done || it.skipped }.joinToString(" · ") {
+                        when {
+                            it.skipped -> "пропуск"
+                            else -> "${if (it.kind == SetKind.WARMUP) "разминка " else ""}${displayWeight(it.weight, unit).ifBlank { "—" }}×${it.reps.ifBlank { "—" }}"
                         }
-                        Text("${exercise.name}: ${sets.ifBlank { "нет выполненных подходов" }}", color = LocalPalette.current.text, style = MaterialTheme.typography.bodySmall)
                     }
-                }
-            }
-}
-
-@Composable
-private fun ProgressScreen(state: DiarySnapshot, modifier: Modifier, openSession: (String) -> Unit) {
-    var period by remember { mutableStateOf("Месяц") }
-    var metric by remember { mutableStateOf(ProgressMetric.MAX_WEIGHT) }
-    var chosenExercise by remember { mutableStateOf<String?>(null) }
-    var showExercises by remember { mutableStateOf(false) }
-    val now = System.currentTimeMillis()
-    val days = when (period) { "7 дней" -> 7; "Месяц" -> 30; "3 месяца" -> 90; else -> null }
-    val from = days?.let { now - it * 86_400_000L }
-    val exerciseNames = state.history.flatMap { it.exercises }.filter { it.tracksLoad }.map { it.name }.distinct().sorted()
-    val exercise = chosenExercise?.takeIf { it in exerciseNames } ?: exerciseNames.firstOrNull()
-    val metrics = calculateProgress(state.history, exercise, from)
-    val points = exercise?.let { calculateProgressSeries(state.history, it, from, metric = metric) }.orEmpty()
-    val previous = if (days == null) null else calculateProgress(state.history, exercise, now - 2 * days * 86_400_000L, now - days * 86_400_000L)
-    ScreenColumn(modifier) {
-        ScreenTitle("Прогресс", "Динамика по завершённым рабочим подходам")
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            listOf("7 дней", "Месяц", "3 месяца", "Всё время").forEach { value ->
-                FilterChip(selected = period == value, onClick = { period = value }, label = { Text(value) })
-            }
-        }
-        Box {
-            OutlinedButton(onClick = { showExercises = true }, enabled = exerciseNames.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text(exercise ?: "Упражнение") }
-            DropdownMenu(expanded = showExercises, onDismissRequest = { showExercises = false }) {
-                exerciseNames.forEach { name -> DropdownMenuItem(text = { Text(name) }, onClick = { chosenExercise = name; showExercises = false }) }
-            }
-        }
-        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("${metrics.sessions} тренировок · ${metrics.completedWorkingSets} рабочих подходов", color = LocalPalette.current.muted)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Stat("Макс. вес", metrics.maxWeightKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—")
-                    Stat("Повторы", metrics.maxReps?.toString() ?: "—")
-                    Stat("Рабочие подходы", metrics.completedWorkingSets.toString())
-                }
-                Text("e1RM по Эпли · ${metrics.estimatedOneRepMaxKg?.let { formatWeight(it, state.settings.weightUnit) } ?: "—"}", color = LocalPalette.current.secondary, fontWeight = FontWeight.SemiBold)
-                Text("Оценка только для рабочих подходов на 1–10 повторений; не измеренный максимум.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf(ProgressMetric.MAX_WEIGHT, ProgressMetric.MAX_REPS, ProgressMetric.ESTIMATED_ONE_REP_MAX).forEach { option ->
-                        FilterChip(selected = metric == option, onClick = { metric = option }, label = { Text(option.title()) })
-                    }
-                }
-                if (exercise != null) TrendGraph(state.history, exercise, from, metric, state.settings.weightUnit, onPointClick = openSession)
-                points.takeLast(5).forEach { point ->
-                    OutlinedButton(onClick = { openSession(point.sessionId) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                        Text("Открыть тренировку · ${date(point.timestamp)} · ${metric.value(point.value, state.settings.weightUnit)}")
-                    }
-                }
-                if (previous != null) {
-                    val before = previous.maxWeightKg
-                    val current = metrics.maxWeightKg
-                    val change = if (before == null || before <= 0.0 || current == null) null else (current - before) / before * 100
-                    Text("Максимальный вес к предыдущему периоду: ${change?.let { (if (it > 0) "+" else "") + String.format(Locale.US, "%.1f%%", it) } ?: "нет базы для сравнения"}", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
+                    Text("${exercise.name}: ${sets.ifBlank { "нет выполненных подходов" }}", Modifier.clickable { openExercise(exercise.name) }.padding(vertical = 3.dp), color = LocalPalette.current.text, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
-        Card(colors = CardDefaults.cardColors(containerColor = LocalPalette.current.surface)) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Личные рекорды · вес", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = LocalPalette.current.text)
-                if (state.bestByExercise.isEmpty()) Text("Пока нет завершённых рабочих подходов с весом.", color = LocalPalette.current.muted)
-                else state.bestByExercise.toList().sortedByDescending { it.second }.forEach { (name, weight) -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(name, color = LocalPalette.current.text); Text(formatWeight(weight, state.settings.weightUnit), color = LocalPalette.current.secondary, fontWeight = FontWeight.Bold) } }
-            }
-        }
-        Text("Вес считается по завершённым рабочим подходам. Разминка, пропуски и незавершённые сессии не учитываются.", color = LocalPalette.current.muted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
-@Composable
-private fun TrendGraph(
-    history: List<TrainingSession>,
-    exerciseName: String,
-    from: Long?,
-    metric: ProgressMetric,
-    unit: WeightUnit,
-    height: androidx.compose.ui.unit.Dp = 150.dp,
-    showLabels: Boolean = true,
-    onPointClick: ((String) -> Unit)? = null,
-) {
-    val colors = LocalPalette.current
-    val points = calculateProgressSeries(history, exerciseName, from, metric = metric)
-    if (points.isEmpty()) { Text("Нет завершённых рабочих подходов для графика.", color = LocalPalette.current.muted); return }
-    val graphModifier = Modifier.fillMaxWidth().height(height).then(
-        if (onPointClick == null) Modifier else Modifier.pointerInput(points) {
-            val chartWidth = size.width.toFloat().coerceAtLeast(1f)
-            detectTapGestures { offset ->
-                val index = if (points.size == 1) 0 else (offset.x / chartWidth * (points.size - 1)).toInt().coerceIn(points.indices)
-                onPointClick(points[index].sessionId)
-            }
-        },
-    )
-    Canvas(graphModifier.semantics { contentDescription = "График ${metric.title()} для упражнения $exerciseName, ${points.size} записей" }) {
-        val top = 8.dp.toPx()
-        val bottom = size.height - 8.dp.toPx()
-        val low = points.minOf { it.value }
-        val high = points.maxOf { it.value }
-        val valuePadding = ((high - low) * .18).coerceAtLeast(high * .12).coerceAtLeast(.25)
-        val chartMin = (low - valuePadding).coerceAtLeast(0.0)
-        val chartMax = (high + valuePadding).coerceAtLeast(chartMin + 1.0)
-        val chartHeight = (bottom - top).coerceAtLeast(1f)
-        for (index in 0..4) {
-            val y = top + chartHeight * index / 4
-            drawLine(colors.muted.copy(alpha = .19f), androidx.compose.ui.geometry.Offset(0f, y), androidx.compose.ui.geometry.Offset(size.width, y), 1.dp.toPx())
-        }
-        val dx = if (points.size <= 1) 0f else size.width / (points.size - 1)
-        val coords = points.mapIndexed { index, point ->
-            val normalized = ((point.value - chartMin) / (chartMax - chartMin)).toFloat()
-            androidx.compose.ui.geometry.Offset(index * dx, bottom - normalized * chartHeight)
-        }
-        if (coords.size > 1) {
-            val linePath = androidx.compose.ui.graphics.Path().apply {
-                moveTo(coords.first().x, coords.first().y)
-                coords.drop(1).forEach { lineTo(it.x, it.y) }
-            }
-            val areaPath = androidx.compose.ui.graphics.Path().apply {
-                moveTo(coords.first().x, bottom)
-                coords.forEach { lineTo(it.x, it.y) }
-                lineTo(coords.last().x, bottom)
-                close()
-            }
-            drawPath(areaPath, androidx.compose.ui.graphics.Brush.verticalGradient(listOf(colors.accent.copy(alpha = .28f), colors.accent.copy(alpha = 0f)), top, bottom))
-            drawPath(linePath, colors.accent, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
-        }
-        coords.forEach { point ->
-            drawCircle(colors.background, radius = 6.dp.toPx(), center = point)
-            drawCircle(colors.accent, radius = 4.dp.toPx(), center = point)
-        }
-    }
-    if (showLabels) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        points.takeLast(5).map { "${SimpleDateFormat("d.M", Locale.forLanguageTag("ru")).format(Date(it.timestamp))} · ${metric.value(it.value, unit)}" }.forEach { Text(it, color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall) }
-    } else if (points.size == 1) Text("${date(points.single().timestamp)} · ${metric.value(points.single().value, unit)}", color = LocalPalette.current.muted, style = MaterialTheme.typography.labelSmall)
-}
-
-@Composable
-private fun Stat(label: String, value: String) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(label, color = LocalPalette.current.muted); Text(value, color = LocalPalette.current.text, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge) } }
 
 private fun date(epoch: Long): String = SimpleDateFormat("d MMM yyyy", Locale.forLanguageTag("ru")).format(Date(epoch))
 private fun kg(value: Double): String = if (value % 1.0 == 0.0) value.toLong().toString() else String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
 private fun WeightUnit.label() = if (this == WeightUnit.KG) "кг" else "lb"
-private fun ProgressMetric.title() = when (this) {
-    ProgressMetric.MAX_WEIGHT -> "Вес"
-    ProgressMetric.MAX_REPS -> "Повторы"
-    ProgressMetric.ESTIMATED_ONE_REP_MAX -> "e1RM"
-}
-private fun ProgressMetric.value(value: Double, unit: WeightUnit) = when (this) {
-    ProgressMetric.MAX_WEIGHT, ProgressMetric.ESTIMATED_ONE_REP_MAX -> formatWeight(value, unit)
-    ProgressMetric.MAX_REPS -> "${kg(value)} повт."
-}
 private fun displayWeight(storedKg: String, unit: WeightUnit): String {
     val value = storedKg.replace(',', '.').toDoubleOrNull() ?: return storedKg
     return kg(fromKilograms(value, unit))

@@ -197,28 +197,66 @@ class DiaryRepository(context: Context, databaseName: String = "reptrack.db") {
         check(appContext.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             "Тестовые данные доступны только в debug-сборке"
         }
-        val name = "Демо · тестовые данные"
+        val name = "Демо · визуальная проверка"
         val profile = helper.profiles().firstOrNull { it.kind == ProfileKind.TRAINEE && it.name == name }
         if (profile == null) helper.createTraineeProfile(name) else helper.setActiveProfile(profile.id)
 
         fun plan(name: String, exercises: List<String>): TrainingPlan {
-            val current = helper.plans().firstOrNull { it.name == name }
-            val plan = current ?: run {
+            var plan = helper.plans().firstOrNull { it.name == name } ?: run {
                 helper.createPlan(name)
                 helper.plans().first { it.name == name }
             }
+            val demoAliases = mapOf(
+                "Тяга верхнего блока" to "Тяга верхнего блока широким хватом",
+                "Молотки с гантелями" to "Попеременные молотки с гантелями",
+                "Тяга нижнего блока" to "Тяга нижнего блока узким хватом",
+            )
+            plan.exercises.forEach { exercise ->
+                val canonical = demoAliases[exercise.name]?.takeIf { it in exercises } ?: return@forEach
+                if (plan.exercises.any { it.id != exercise.id && it.name == canonical }) helper.deleteExercise(exercise.id)
+                else helper.updateExercise(exercise.copy(name = canonical))
+            }
+            plan = helper.plans().first { it.id == plan.id }
             exercises.filterNot { exercise -> plan.exercises.any { it.name == exercise } }
                 .forEach { helper.addExercise(plan.id, it) }
+            if (!plan.inCycle) helper.setPlanInCycle(plan.id, true)
             return helper.plans().first { it.id == plan.id }
         }
 
-        val push = plan("Демо · Push", listOf("Жим лёжа", "Тяга верхнего блока"))
-        val legs = plan("Демо · Ноги", listOf("Приседания", "Жим ногами"))
+        val push = plan(
+            "Демо · Push",
+            listOf("Жим штанги средним хватом", "Тяга верхнего блока широким хватом", "Жим ногами", "Приседания со штангой"),
+        )
+        val legs = plan("Демо · Ноги", listOf("Приседания со штангой", "Жим ногами"))
+        val pull = plan("Демо · Pull", listOf("Тяга верхнего блока широким хватом", "Тяга нижнего блока узким хватом"))
+        val up = plan("Демо · Up", listOf("Жим штанги средним хватом", "Попеременные молотки с гантелями"))
+        val demoProfileId = helper.profiles().first { it.kind == ProfileKind.TRAINEE && it.name == name }.id
+        val demoAliases = mapOf(
+            "Тяга верхнего блока" to "Тяга верхнего блока широким хватом",
+            "Молотки с гантелями" to "Попеременные молотки с гантелями",
+            "Тяга нижнего блока" to "Тяга нижнего блока узким хватом",
+        )
+        demoAliases.forEach { (legacy, canonical) ->
+            helper.writableDatabase.update(
+                "session_exercises",
+                ContentValues().apply { put("name", canonical) },
+                "name=? AND session_id IN (SELECT id FROM sessions WHERE owner_id=?)",
+                arrayOf(legacy, demoProfileId),
+            )
+        }
         val sessions = listOf(
             push.id to listOf(40.0, 30.0),
             legs.id to listOf(60.0, 40.0),
+            pull.id to listOf(35.0, 40.0),
+            up.id to listOf(42.5, 12.5),
+            push.id to listOf(47.5, 35.0),
+            legs.id to listOf(65.0, 50.0),
+            pull.id to listOf(40.0, 45.0),
+            up.id to listOf(45.0, 15.0),
             push.id to listOf(45.0, 32.5),
-            legs.id to listOf(65.0, 42.5),
+            legs.id to listOf(62.5, 47.5),
+            pull.id to listOf(42.5, 47.5),
+            up.id to listOf(50.0, 17.5),
         )
         if (helper.active() != null) return
         val existing = helper.history().size.coerceAtMost(sessions.size)
@@ -230,16 +268,19 @@ class DiaryRepository(context: Context, databaseName: String = "reptrack.db") {
             active.exercises.forEachIndexed { exerciseIndex, exercise ->
                 val baseWeight = baseWeights.getOrElse(exerciseIndex) { 40.0 }
                 exercise.sets.forEachIndexed { setIndex, set ->
-                    val weight = (baseWeight - setIndex * 2.5).toString()
-                    val reps = (10 - setIndex).toString()
+                    val kind = if (setIndex == 0) SetKind.WARMUP else SetKind.WORK
+                    helper.setKind(set.id, kind)
+                    val weight = (if (setIndex == 0) baseWeight * .5 else baseWeight - (setIndex - 1) * 2.5).toString()
+                    val reps = (if (setIndex == 0) 12 else 10 - setIndex).toString()
                     helper.updateSet(set.id, weight, reps)
-                    helper.toggleSet(set.copy(weight = weight, reps = reps))
+                    helper.toggleSet(set.copy(weight = weight, reps = reps, kind = kind))
                     helper.skipRest(set.id)
                 }
             }
             helper.updateComment(sessionId, "Демо-запись для проверки истории и прогресса")
             helper.finish(sessionId)
-            val startedAt = now - (28 - index * 7) * 86_400_000L
+            val daysAgo = listOf(29, 27, 24, 22, 19, 17, 14, 11, 8, 5, 3, 1)[index]
+            val startedAt = now - daysAgo * 86_400_000L
             helper.writableDatabase.update(
                 "sessions",
                 ContentValues().apply { put("started_at", startedAt); put("ended_at", startedAt + 45 * 60_000L) },
