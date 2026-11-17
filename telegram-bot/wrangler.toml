@@ -7,3 +7,11 @@ workers_dev = true
 binding = "DB"
 database_name = "reptrack-telegram-relay"
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[env.staging]
+name = "reptrack-telegram-relay-staging"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "reptrack-telegram-relay-staging"
+database_id = "REPLACE_WITH_STAGING_D1_DATABASE_ID"

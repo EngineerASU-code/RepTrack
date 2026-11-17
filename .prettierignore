@@ -1,0 +1,4 @@
+# Generated browser-hosting copy and build outputs
+dist/
+**/build/
+node_modules/

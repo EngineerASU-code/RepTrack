@@ -109,7 +109,7 @@ SQLite с транзакциями и версиями схемы сам по с
 - Android: `gradlew.bat --no-daemon :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest` — **BUILD SUCCESSFUL**, 67 задач, код выхода 0. Использованы JDK 21.0.8 из `C:/Program Files/Android/openjdk/jdk-21.0.8`, SDK `android/.android-sdk` и Gradle cache `android/.gradle`. Первая попытка в песочнице не разрешила `services.gradle.org`; после разрешения сетевого доступа Wrapper и зависимости загрузились, сборка завершилась.
 - Свежие JVM-результаты: **11 тестов, 0 failures, 0 errors, 0 skipped**: `DiaryTransferTest` — 3, `SecureExchangeTest` — 1, `TrainingSessionTest` — 7. XML прочитаны после завершения текущей сборки.
 - Собран текущий debug APK: `D:/RepTrack/android/app/build/outputs/apk/debug/app-debug.apk`, 11 877 919 байт. APK тестов: `D:/RepTrack/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk`, 386 562 байта.
-- Исправлена ошибка Android Keystore: для запечатывания секрета Keystore сам выдаёт IV (`SecureExchange.kt`); формат чтения совместим с существующими запечатанными данными. Полный `DiaryRepositoryInstrumentedTest` + `SourceReportsInstrumentedTest` — PASS: **18 тестов, 0 ошибок**, эмулятор `emulator-5554`. `ManualPreviewSeedTest` намеренно не запускался.
+- Исправлена ошибка Android Keystore: для запечатывания секрета Keystore сам выдаёт IV (`SecureExchange.kt`); формат чтения совместим с существующими запечатанными данными. Полный `DiaryRepositoryInstrumentedTest` + `DemoReportsInstrumentedTest` — PASS: **18 тестов, 0 ошибок**, эмулятор `emulator-5554`. `ManualPreviewSeedTest` намеренно не запускался.
 - Старые XML-результаты и отчёты о сборке не использованы как результаты текущей проверки.
 
 ## Очерёдность доведения до ТЗ
@@ -121,4 +121,4 @@ SQLite с транзакциями и версиями схемы сам по с
 5. Согласовать отклонение от Room/DataStore/Navigation либо выполнить переход; добавить оставшиеся настройки и поддержку медиа.
 6. Отдельно подтвердить развёртывание и двусторонний Telegram-обмен. Обновить или убрать из приёмочного контура устаревший веб-прототип.
 
-Дополнительно проверен нативный запуск приложения на Android AVD, Android unit и instrumented тесты, Telegram Worker unit-тесты, импорт данных исходных отчётов и критические сценарии Stage 2/3. Визуально проверен текущий запуск Purple Pro; полноценная покомпонентная сверка каждого экрана с PNG отдельно не выполнялась.
+Дополнительно проверен нативный запуск приложения на Android AVD, Android unit и instrumented тесты, Telegram Worker unit-тесты, импорт синтетической demo-fixture и критические сценарии Stage 2/3. Визуально проверен запуск Purple Pro; полноценная покомпонентная сверка каждого экрана с PNG отдельно не выполнялась.

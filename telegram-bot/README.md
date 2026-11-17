@@ -10,9 +10,13 @@
 - Подключение маршрута не проверяет Telegram-личность пользователя через аккаунт RepTrack. Обе стороны должны сами открыть личный чат с ботом и отправить файл `.rptrelay` из соответствующей доверенной связи. Не пересылайте этот файл посторонним.
 - Отправка PDF означает передачу содержимого в Telegram. Получение файла тренером не означает, что он открыл его или импортировал `.rptresult`; импорт и принятие программы подтверждаются отдельно в RepTrack.
 
+## Аватар бота
+
+Для профиля Telegram подготовлен квадратный аватар, согласованный с Android-иконкой RepTrack: [`design/telegram-bot-avatar.png`](../design/telegram-bot-avatar.png). Это профильное изображение бота, не баннер канала. Установить его в Telegram должен владелец бота через BotFather или доступные настройки Bot API; из репозитория загрузка не выполняется.
+
 ## Требования
 
-- Node.js 20+ с `npm`/`npx` для Wrangler; синтаксические и модульные тесты работают через встроенный `node:test` и не требуют npm-пакетов.
+- Node.js 24+ с `npm`/`npx` для Wrangler; синтаксические и модульные тесты работают через встроенный `node:test` и не требуют npm-пакетов.
 - Бесплатный аккаунт Cloudflare с Workers и D1.
 - Telegram-бот, созданный через `@BotFather`. Токен храните только в Cloudflare Secret и локально во время настройки webhook. Не добавляйте его в Git, не отправляйте в RepTrack чат и не передавайте в этот репозиторий.
 
@@ -29,22 +33,24 @@ node --test test/index.test.mjs
 
 ## Первое развёртывание
 
+Инструкции этого раздела предназначены для staging ресурсов. Не подставляйте production bot token или D1 ID; для проверки создайте отдельного тестового бота через `@BotFather`, отдельную D1 базу и Worker `reptrack-telegram-relay-staging`. Развёртывание и webhook вручную запускает владелец ресурсов после заполнения staging ID ниже.
+
 В PowerShell из `telegram-bot/`:
 
 1. Создайте D1 базу:
 
    ```powershell
-   npx wrangler d1 create reptrack-telegram-relay
+   npx wrangler d1 create reptrack-telegram-relay-staging
    ```
 
-   Скопируйте выданный `database_id` в `wrangler.toml`, заменив `REPLACE_WITH_D1_DATABASE_ID`.
+   Скопируйте выданный `database_id` в секцию `[env.staging]` файла `wrangler.toml`, заменив `REPLACE_WITH_STAGING_D1_DATABASE_ID`. Не меняйте ID базы по умолчанию для основной среды.
 
 2. Примените схему и сохраните Telegram токен как секрет Worker:
 
    ```powershell
-   npx wrangler d1 execute reptrack-telegram-relay --remote --file=migrations/0001_init.sql
-   npx wrangler secret put BOT_TOKEN
-   npx wrangler secret put WEBHOOK_SECRET
+   npx wrangler d1 execute reptrack-telegram-relay-staging --remote --file=migrations/0001_init.sql --env staging
+   npx wrangler secret put BOT_TOKEN --env staging
+   npx wrangler secret put WEBHOOK_SECRET --env staging
    ```
 
    Wrangler запросит значения интерактивно. `WEBHOOK_SECRET` должен содержать только латинские буквы, цифры, `_` или `-`; используйте случайную строку не короче 32 символов.
@@ -52,7 +58,7 @@ node --test test/index.test.mjs
 3. Разверните Worker:
 
    ```powershell
-   npx wrangler deploy
+   npx wrangler deploy --env staging
    ```
 
 4. Укажите webhook Telegram. В PowerShell задайте значения без отображения секретов:
@@ -67,9 +73,9 @@ node --test test/index.test.mjs
    Remove-Item Env:BOT_TOKEN, Env:WORKER_URL, Env:WEBHOOK_SECRET
    ```
 
-   В Worker должен быть установлен тот же `WEBHOOK_SECRET`, что используется здесь. Скрипт не удаляет ожидающие Telegram обновления. Для смены токена сначала выполните `npx wrangler secret put BOT_TOKEN`, затем повторите установку webhook с новым токеном.
+   В staging Worker должен быть установлен тот же `WEBHOOK_SECRET`, что используется здесь. Введите токен только тестового бота. Скрипт не удаляет ожидающие Telegram обновления. Для смены токена сначала выполните `npx wrangler secret put BOT_TOKEN --env staging`, затем повторите установку webhook с новым токеном.
 
-В Cloudflare Dashboard проверьте успешный статус Worker и D1. `/start`, `/help` и `/status` доступны в личном чате бота. После обновления кода повторите `npx wrangler deploy`; при изменении схемы сначала добавьте миграцию в `migrations/` и примените её к D1.
+В Cloudflare Dashboard проверьте успешный статус staging Worker и D1. `/start`, `/help` и `/status` доступны в личном чате тестового бота. После обновления кода повторите `npx wrangler deploy --env staging`; при изменении схемы сначала добавьте миграцию в `migrations/` и примените её к staging D1.
 
 ## Подключение устройств и обмен
 
@@ -83,6 +89,6 @@ node --test test/index.test.mjs
 ## Известные ограничения
 
 - Worker исполняет каждый Telegram update синхронно и имеет ограничение бесплатного CPU. Незавершённый update получает HTTP 503, чтобы Telegram повторил доставку; после истечения минутного lease его можно перехватить. Завершённые update подтверждаются HTTP 200. Проверьте фактическую доставку типичного отчёта после развёртывания; модульные тесты не проверяют живой Bot API, D1 или Telegram retry.
-- Telegram Bot API не предоставляет ключ идемпотентности для `sendDocument`: при сбое между отправкой файла и записью статуса возможен повтор файла после retry. Обычные повторные update и повторная отправка уже отмеченного пакета подавляются.
+- Пересылка использует at-least-once retry. Telegram Bot API не предоставляет ключ идемпотентности для `sendDocument`: если Telegram принял файл, а Worker не получил подтверждение или не успел записать статус, retry может прислать тот же файл повторно. Повторные update после завершения и уже отмеченные пакеты подавляются; неясный результат отправки остаётся возможной причиной дубликата.
 - Bot API может не прислать `file_size`; Worker в таком случае проверяет фактический размер после скачивания.
 - Для Android нужны отдельные сборка и инструментальные тесты; команды указаны в `../android/README.md`.

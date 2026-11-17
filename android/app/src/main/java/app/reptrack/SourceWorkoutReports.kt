@@ -3,28 +3,26 @@ package app.reptrack
 import org.json.JSONObject
 import java.time.LocalDate
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-internal const val sourceReportsProfileId = "source-reports-owner"
+internal const val demoReportsProfileId = "demo-workout-reports"
 
-/** Only standalone weight × reps tokens are interpreted. Full transcription stays in the asset. */
-internal fun decodeSourceWorkoutReports(bytes: ByteArray): List<TrainingSession> {
+/** Only standalone weight × reps tokens are interpreted from the synthetic debug asset. */
+internal fun decodeDemoWorkoutReports(bytes: ByteArray): List<TrainingSession> {
     val root = JSONObject(bytes.toString(Charsets.UTF_8))
-    require(root.getString("format") == "reptrack-source-reports" && root.getInt("version") == 1)
+    require(root.getString("format") == "reptrack-demo-workouts" && root.getInt("version") == 1)
     val reports = root.getJSONArray("reports")
     val seen = mutableSetOf<String>()
     return buildList {
         for (index in 0 until reports.length()) {
             val report = reports.getJSONObject(index)
-            val file = report.getString("file")
-            require(file.matches(Regex("[0-9]{8}\\.jpg")) && seen.add(file))
-            if (report.has("duplicateOf")) continue
-            val date = LocalDate.parse(file.substringBefore('.'), DateTimeFormatter.ofPattern("ddMMuuuu"))
-            // Date-only source: UTC noon is a sorting anchor, not a recorded workout time.
+            val reportId = report.getString("id")
+            require(reportId.matches(Regex("[a-z0-9-]{1,64}")) && seen.add(reportId))
+            val date = LocalDate.parse(report.getString("date"))
+            // Demo dates are fixed only to make ordering repeatable.
             val day = date.atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
             val items = report.getJSONArray("exercises")
-            val comments = mutableListOf("Источник: database/$file. Дата из имени файла; время и длительность неизвестны. Типы подходов не указаны: числовые записи отмечены рабочими для тестового отображения.")
+            val comments = mutableListOf("Синтетический демонстрационный пример; дата, время и длительность условны.")
             report.optString("note").takeIf { it.isNotBlank() }?.let(comments::add)
             val exercises = (0 until items.length()).map { exerciseIndex ->
                 val item = items.getJSONArray(exerciseIndex)
@@ -37,14 +35,14 @@ internal fun decodeSourceWorkoutReports(bytes: ByteArray): List<TrainingSession>
                     Regex("^([0-9]+(?:\\.[0-9]+)?)\\s*[xхXХ×]\\s*([0-9]+)$").matchEntire(token.trim())
                         ?.let { it.groupValues[1] to it.groupValues[2] }
                 }
-                SessionExercise(sourceId("$file/exercise/$exerciseIndex"), name, exerciseIndex, false, strength,
-                    pairs.mapIndexed { setIndex, pair -> TrainingSet(sourceId("$file/$exerciseIndex/$setIndex"), setIndex,
+                SessionExercise(demoId("$reportId/exercise/$exerciseIndex"), name, exerciseIndex, false, strength,
+                    pairs.mapIndexed { setIndex, pair -> TrainingSet(demoId("$reportId/$exerciseIndex/$setIndex"), setIndex,
                         pair.first, pair.second, SetKind.WORK, true, false, 0, null, 0) })
             }
-            add(TrainingSession(sourceId(file), null, report.getString("title"), SessionStatus.COMPLETED, day, day,
-                exercises, comments.joinToString("\n").take(1000), sourceReportsProfileId))
+            add(TrainingSession(demoId(reportId), null, report.getString("title"), SessionStatus.COMPLETED, day, day,
+                exercises, comments.joinToString("\n").take(1000), demoReportsProfileId))
         }
     }
 }
 
-private fun sourceId(key: String): String = UUID.nameUUIDFromBytes("reptrack/source-reports/v1/$key".toByteArray(Charsets.UTF_8)).toString()
+private fun demoId(key: String): String = UUID.nameUUIDFromBytes("reptrack/demo-workouts/v1/$key".toByteArray(Charsets.UTF_8)).toString()

@@ -47,7 +47,7 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     fun setRestTimerEnabled(enabled: Boolean) = mutate { repository.setRestTimerEnabled(enabled) }
     fun createTraineeProfile(name: String) = mutate { repository.createTraineeProfile(name) }
     fun createDemoProfile() = mutate { repository.createDemoProfile() }
-    fun createSourceReportsProfile() = mutate { repository.createSourceReportsProfile() }
+    fun createDemoReportsProfile() = mutate { repository.createDemoReportsProfile() }
     fun renameProfile(id: String, name: String) = mutate { repository.renameProfile(id, name) }
     fun setActiveProfile(id: String, onComplete: (String?) -> Unit = {}) = transferMutation(onComplete) { repository.setActiveProfile(id) }
     fun assignPlanToProfile(planId: String, profileId: String) = mutate { repository.assignPlanToProfile(planId, profileId) }

@@ -1,38 +1,71 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { gzipSync } from "node:zlib";
-import worker, { claimUpdate, finishUpdate, matchesPair, parseDelivery, parseExchangeHeader, parseRouteRegistration } from "../src/index.mjs";
+import worker, {
+  claimUpdate,
+  finishUpdate,
+  matchesPair,
+  parseDelivery,
+  parseExchangeHeader,
+  parseRouteRegistration,
+} from "../src/index.mjs";
 
 function updateDb() {
   const rows = new Map();
   return {
     rows,
     prepare(sql) {
-      return { bind(...args) { return {
-        async run() {
-          if (sql.startsWith("DELETE FROM telegram_updates")) return { meta: { changes: 0 } };
-          if (sql.startsWith("INSERT OR IGNORE")) {
-            if (rows.has(args[0])) return { meta: { changes: 0 } };
-            rows.set(args[0], { status: "PROCESSING", claimed_at: args[1] }); return { meta: { changes: 1 } };
-          }
-          if (sql.startsWith("UPDATE telegram_updates")) {
-            if (sql.includes("claimed_at=? WHERE update_id=? AND status='PROCESSING' AND claimed_at=?")) {
-              const row = rows.get(args[2]);
-              if (row?.status === "PROCESSING" && row.claimed_at === args[3]) {
-                row.status = args[0]; row.claimed_at = args[1]; return { meta: { changes: 1 } };
+      return {
+        bind(...args) {
+          return {
+            async run() {
+              if (sql.startsWith("DELETE FROM telegram_updates"))
+                return { meta: { changes: 0 } };
+              if (sql.startsWith("INSERT OR IGNORE")) {
+                if (rows.has(args[0])) return { meta: { changes: 0 } };
+                rows.set(args[0], {
+                  status: "PROCESSING",
+                  claimed_at: args[1],
+                });
+                return { meta: { changes: 1 } };
               }
-              return { meta: { changes: 0 } };
-            }
-            const row = rows.get(args[1]);
-            if (row && row.status !== "DONE" && (row.status === "FAILED" || row.claimed_at <= args[2])) {
-              row.status = "PROCESSING"; row.claimed_at = args[0]; return { meta: { changes: 1 } };
-            }
-            return { meta: { changes: 0 } };
-          }
-          throw new Error(`Unexpected SQL: ${sql}`);
+              if (sql.startsWith("UPDATE telegram_updates")) {
+                if (
+                  sql.includes(
+                    "claimed_at=? WHERE update_id=? AND status='PROCESSING' AND claimed_at=?",
+                  )
+                ) {
+                  const row = rows.get(args[2]);
+                  if (
+                    row?.status === "PROCESSING" &&
+                    row.claimed_at === args[3]
+                  ) {
+                    row.status = args[0];
+                    row.claimed_at = args[1];
+                    return { meta: { changes: 1 } };
+                  }
+                  return { meta: { changes: 0 } };
+                }
+                const row = rows.get(args[1]);
+                if (
+                  row &&
+                  row.status !== "DONE" &&
+                  (row.status === "FAILED" || row.claimed_at <= args[2])
+                ) {
+                  row.status = "PROCESSING";
+                  row.claimed_at = args[0];
+                  return { meta: { changes: 1 } };
+                }
+                return { meta: { changes: 0 } };
+              }
+              throw new Error(`Unexpected SQL: ${sql}`);
+            },
+            async first() {
+              return rows.get(args[0]) ?? null;
+            },
+          };
         },
-        async first() { return rows.get(args[0]) ?? null; },
-      }; } };
+      };
     },
   };
 }
@@ -47,11 +80,33 @@ const fingerprint = "A1B2 C3D4 E5F6 1020 3040";
 test("webhook rejects unauthorized and malformed requests before claiming an update", async () => {
   const DB = updateDb();
   const env = { DB, BOT_TOKEN: "test", WEBHOOK_SECRET: "secret" };
-  const request = (secret, body) => new Request("https://worker.test/telegram/webhook", {
-    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": secret, "Content-Type": "application/json" }, body,
-  });
-  assert.equal((await worker.fetch(request("wrong", JSON.stringify({ update_id: 30 })), env)).status, 401);
-  assert.equal((await worker.fetch(request("secret", JSON.stringify({ update_id: "30" })), env)).status, 400);
+  const request = (secret, body) =>
+    new Request("https://worker.test/telegram/webhook", {
+      method: "POST",
+      headers: {
+        "X-Telegram-Bot-Api-Secret-Token": secret,
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+  assert.equal(
+    (
+      await worker.fetch(
+        request("wrong", JSON.stringify({ update_id: 30 })),
+        env,
+      )
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await worker.fetch(
+        request("secret", JSON.stringify({ update_id: "30" })),
+        env,
+      )
+    ).status,
+    400,
+  );
   assert.equal(DB.rows.size, 0);
 });
 
@@ -59,28 +114,262 @@ test("failed webhook handling remains retryable and is completed after recovery"
   const DB = updateDb();
   const env = { DB, BOT_TOKEN: "test", WEBHOOK_SECRET: "secret" };
   const originalFetch = globalThis.fetch;
-  const request = () => new Request("https://worker.test/telegram/webhook", {
-    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "secret", "Content-Type": "application/json" },
-    body: JSON.stringify({ update_id: 31, message: { chat: { id: 101, type: "private" }, text: "/start" } }),
-  });
+  const request = () =>
+    new Request("https://worker.test/telegram/webhook", {
+      method: "POST",
+      headers: {
+        "X-Telegram-Bot-Api-Secret-Token": "secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        update_id: 31,
+        message: { chat: { id: 101, type: "private" }, text: "/start" },
+      }),
+    });
   let calls = 0;
   try {
-    globalThis.fetch = async () => { calls++; throw new Error("simulated connection failure"); };
+    globalThis.fetch = async () => {
+      calls++;
+      throw new Error("simulated connection failure");
+    };
     assert.equal((await worker.fetch(request(), env)).status, 500);
     assert.equal(DB.rows.get(31).status, "FAILED");
-    globalThis.fetch = async () => { calls++; return Response.json({ ok: true, result: {} }); };
+    globalThis.fetch = async () => {
+      calls++;
+      return Response.json({ ok: true, result: {} });
+    };
     assert.equal((await worker.fetch(request(), env)).status, 200);
     assert.equal(DB.rows.get(31).status, "DONE");
     assert.equal((await worker.fetch(request(), env)).status, 200);
     assert.equal(calls, 2);
-  } finally { globalThis.fetch = originalFetch; }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("ambiguous sendDocument success is retried at least once and can duplicate the file", async () => {
+  const now = Date.now();
+  const header = {
+    packageId,
+    linkId,
+    senderDeviceId: traineeDeviceId,
+    recipientDeviceId: trainerDeviceId,
+    type: "result",
+    createdAt: now,
+    expiresAt: now + 60_000,
+    version: 1,
+    programVersion: null,
+  };
+  const encrypted = {
+    format: "reptrack-exchange",
+    version: 1,
+    aad: Buffer.from(JSON.stringify(header)).toString("base64"),
+    nonce: Buffer.alloc(12).toString("base64"),
+    ciphertext: Buffer.alloc(16).toString("base64"),
+  };
+  const fileBytes = gzipSync(
+    Buffer.from(
+      JSON.stringify({
+        format: "reptrack-telegram-delivery",
+        version: 1,
+        linkId,
+        packageId,
+        senderDeviceId: traineeDeviceId,
+        recipientDeviceId: trainerDeviceId,
+        sessionId,
+        planName: "Test",
+        startedAt: now - 60_000,
+        endedAt: now,
+        durationMinutes: 1,
+        exerciseCount: 1,
+        completedWorkSets: 1,
+        reportPdf: Buffer.from("%PDF-test").toString("base64"),
+        resultPackage: Buffer.from(JSON.stringify(encrypted)).toString(
+          "base64",
+        ),
+      }),
+    ),
+  );
+  const updates = new Map();
+  const forwards = new Map();
+  const route = {
+    link_id: linkId,
+    trainer_chat_id: "202",
+    trainee_chat_id: "101",
+    trainer_device_id: trainerDeviceId,
+    trainee_device_id: traineeDeviceId,
+  };
+  const DB = {
+    prepare(sql) {
+      return {
+        bind(...args) {
+          return {
+            async run() {
+              if (
+                sql.startsWith("DELETE FROM telegram_updates") ||
+                sql.startsWith("DELETE FROM telegram_forwards")
+              )
+                return { meta: { changes: 0 } };
+              if (sql.startsWith("INSERT OR IGNORE INTO telegram_updates")) {
+                if (updates.has(args[0])) return { meta: { changes: 0 } };
+                updates.set(args[0], {
+                  status: "PROCESSING",
+                  claimed_at: args[1],
+                });
+                return { meta: { changes: 1 } };
+              }
+              if (sql.startsWith("UPDATE telegram_updates")) {
+                if (sql.startsWith("UPDATE telegram_updates SET status=?,")) {
+                  const row = updates.get(args[2]);
+                  if (
+                    row?.status === "PROCESSING" &&
+                    row.claimed_at === args[3]
+                  ) {
+                    row.status = args[0];
+                    row.claimed_at = args[1];
+                    return { meta: { changes: 1 } };
+                  }
+                  return { meta: { changes: 0 } };
+                }
+                const row = updates.get(args[1]);
+                if (
+                  row &&
+                  row.status !== "DONE" &&
+                  (row.status === "FAILED" || row.claimed_at <= args[2])
+                ) {
+                  row.status = "PROCESSING";
+                  row.claimed_at = args[0];
+                  return { meta: { changes: 1 } };
+                }
+                return { meta: { changes: 0 } };
+              }
+              if (sql.startsWith("INSERT OR IGNORE INTO telegram_forwards")) {
+                if (!forwards.has(args[0]))
+                  forwards.set(args[0], {
+                    link_id: args[1],
+                    kind: args[2],
+                    status: "RECEIVED",
+                    updated_at: args[3],
+                  });
+                return { meta: { changes: 0 } };
+              }
+              if (sql.startsWith("UPDATE telegram_forwards SET status=")) {
+                const row = forwards.get(args[1]);
+                if (row) {
+                  row.status = sql.includes("'PDF_SENT'") ? "PDF_SENT" : "DONE";
+                  row.updated_at = args[0];
+                }
+                return { meta: { changes: row ? 1 : 0 } };
+              }
+              if (sql.startsWith("UPDATE telegram_routes SET last_seen_at="))
+                return { meta: { changes: 1 } };
+              throw new Error(`Unexpected SQL: ${sql}`);
+            },
+            async first() {
+              if (
+                sql.startsWith("SELECT status,claimed_at FROM telegram_updates")
+              )
+                return updates.get(args[0]) ?? null;
+              if (sql.startsWith("SELECT * FROM telegram_routes")) return route;
+              if (
+                sql.startsWith(
+                  "SELECT link_id,kind,status FROM telegram_forwards",
+                )
+              )
+                return forwards.get(args[0]) ?? null;
+              return null;
+            },
+          };
+        },
+      };
+    },
+  };
+  const env = { DB, BOT_TOKEN: "test", WEBHOOK_SECRET: "secret" };
+  const originalFetch = globalThis.fetch;
+  const documentAttempts = [];
+  const acceptedDocuments = [];
+  let failAfterResultAccepted = true;
+  const request = () =>
+    worker.fetch(
+      new Request("https://worker.test/telegram/webhook", {
+        method: "POST",
+        headers: {
+          "X-Telegram-Bot-Api-Secret-Token": "secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          update_id: 41,
+          message: {
+            chat: { id: 101, type: "private" },
+            from: { first_name: "Test" },
+            document: {
+              file_id: "input",
+              file_name: "delivery.rptdelivery",
+              file_size: fileBytes.byteLength,
+            },
+          },
+        }),
+      }),
+      env,
+    );
+  try {
+    globalThis.fetch = async (url, options = {}) => {
+      if (String(url).includes("/getFile"))
+        return Response.json({
+          ok: true,
+          result: { file_path: "documents/input" },
+        });
+      if (String(url).includes("/file/bottest/"))
+        return new Response(fileBytes);
+      if (String(url).includes("/sendDocument")) {
+        const name = options.body.get("document").name;
+        documentAttempts.push(name);
+        acceptedDocuments.push(name);
+        if (name.endsWith(".rptresult") && failAfterResultAccepted) {
+          failAfterResultAccepted = false;
+          // Telegram accepted the document, but the response is lost in transit.
+          throw new Error(
+            "simulated lost response after Telegram accepted the file",
+          );
+        }
+        return Response.json({ ok: true, result: {} });
+      }
+      return Response.json({ ok: true, result: {} });
+    };
+    assert.equal((await request()).status, 500);
+    assert.equal(forwards.get(packageId).status, "PDF_SENT");
+    assert.equal(updates.get(41).status, "FAILED");
+    assert.equal((await request()).status, 200);
+    assert.equal(forwards.get(packageId).status, "DONE");
+    assert.deepEqual(documentAttempts, [
+      `RepTrack-${sessionId}.pdf`,
+      `RepTrack-${packageId}.rptresult`,
+      `RepTrack-${packageId}.rptresult`,
+    ]);
+    assert.deepEqual(acceptedDocuments, [
+      `RepTrack-${sessionId}.pdf`,
+      `RepTrack-${packageId}.rptresult`,
+      `RepTrack-${packageId}.rptresult`,
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("route registration parses role and link identity", () => {
-  const registration = parseRouteRegistration(new TextEncoder().encode(JSON.stringify({
-    format: "reptrack-telegram-route", version: 1, linkId, role: "TRAINER",
-    localDeviceId: trainerDeviceId, remoteDeviceId: traineeDeviceId, fingerprint,
-  })));
+  const registration = parseRouteRegistration(
+    new TextEncoder().encode(
+      JSON.stringify({
+        format: "reptrack-telegram-route",
+        version: 1,
+        linkId,
+        role: "TRAINER",
+        localDeviceId: trainerDeviceId,
+        remoteDeviceId: traineeDeviceId,
+        fingerprint,
+      }),
+    ),
+  );
   assert.equal(registration.role, "TRAINER");
   assert.equal(registration.local_device_id, trainerDeviceId);
 });
@@ -94,8 +383,11 @@ test("webhook updates distinguish done, busy, and atomically reclaimable leases"
   assert.equal((await claimUpdate(db, 11)).status, "CLAIMED");
   db.rows.get(11).claimed_at = 0;
   const results = await Promise.all([claimUpdate(db, 11), claimUpdate(db, 11)]);
-  assert.deepEqual(results.map(result => result.status).sort(), ["BUSY", "CLAIMED"]);
-  const firstLease = results.find(result => result.status === "CLAIMED");
+  assert.deepEqual(results.map((result) => result.status).sort(), [
+    "BUSY",
+    "CLAIMED",
+  ]);
+  const firstLease = results.find((result) => result.status === "CLAIMED");
   firstLease.claimedAt = 0;
   db.rows.get(11).claimed_at = 0;
   const replacement = await claimUpdate(db, 11);
@@ -108,100 +400,211 @@ test("webhook updates distinguish done, busy, and atomically reclaimable leases"
 test("webhook ACKs completed work, retries a live lease, and processes a reclaimed update", async () => {
   const DB = updateDb();
   const env = { DB, BOT_TOKEN: "test", WEBHOOK_SECRET: "secret" };
-  const send = () => worker.fetch(new Request("https://worker.test/telegram/webhook", {
-    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "secret", "Content-Type": "application/json" }, body: JSON.stringify({ update_id: 20 }),
-  }), env);
+  const send = () =>
+    worker.fetch(
+      new Request("https://worker.test/telegram/webhook", {
+        method: "POST",
+        headers: {
+          "X-Telegram-Bot-Api-Secret-Token": "secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ update_id: 20 }),
+      }),
+      env,
+    );
   const first = await send();
   assert.equal(first.status, 200);
   assert.equal(DB.rows.get(20).status, "DONE");
   assert.equal((await send()).status, 200);
   DB.rows.set(21, { status: "PROCESSING", claimed_at: Date.now() });
-  const busy = await worker.fetch(new Request("https://worker.test/telegram/webhook", {
-    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "secret", "Content-Type": "application/json" }, body: JSON.stringify({ update_id: 21 }),
-  }), env);
+  const busy = await worker.fetch(
+    new Request("https://worker.test/telegram/webhook", {
+      method: "POST",
+      headers: {
+        "X-Telegram-Bot-Api-Secret-Token": "secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ update_id: 21 }),
+    }),
+    env,
+  );
   assert.equal(busy.status, 503);
   DB.rows.get(21).claimed_at = 0;
-  const reclaimed = await worker.fetch(new Request("https://worker.test/telegram/webhook", {
-    method: "POST", headers: { "X-Telegram-Bot-Api-Secret-Token": "secret", "Content-Type": "application/json" }, body: JSON.stringify({ update_id: 21 }),
-  }), env);
+  const reclaimed = await worker.fetch(
+    new Request("https://worker.test/telegram/webhook", {
+      method: "POST",
+      headers: {
+        "X-Telegram-Bot-Api-Secret-Token": "secret",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ update_id: 21 }),
+    }),
+    env,
+  );
   assert.equal(reclaimed.status, 200);
   assert.equal(DB.rows.get(21).status, "DONE");
 });
 
 test("route registration only joins opposite ends of the same trusted device pair", () => {
-  const trainer = parseRouteRegistration(new TextEncoder().encode(JSON.stringify({
-    format: "reptrack-telegram-route", version: 1, linkId, role: "TRAINER",
-    localDeviceId: trainerDeviceId, remoteDeviceId: traineeDeviceId, fingerprint,
-  })));
-  const trainee = parseRouteRegistration(new TextEncoder().encode(JSON.stringify({
-    format: "reptrack-telegram-route", version: 1, linkId, role: "TRAINEE",
-    localDeviceId: traineeDeviceId, remoteDeviceId: trainerDeviceId, fingerprint,
-  })));
+  const trainer = parseRouteRegistration(
+    new TextEncoder().encode(
+      JSON.stringify({
+        format: "reptrack-telegram-route",
+        version: 1,
+        linkId,
+        role: "TRAINER",
+        localDeviceId: trainerDeviceId,
+        remoteDeviceId: traineeDeviceId,
+        fingerprint,
+      }),
+    ),
+  );
+  const trainee = parseRouteRegistration(
+    new TextEncoder().encode(
+      JSON.stringify({
+        format: "reptrack-telegram-route",
+        version: 1,
+        linkId,
+        role: "TRAINEE",
+        localDeviceId: traineeDeviceId,
+        remoteDeviceId: trainerDeviceId,
+        fingerprint,
+      }),
+    ),
+  );
   assert.equal(matchesPair(trainer, trainee), true);
-  assert.equal(matchesPair(trainer, { ...trainee, local_device_id: trainerDeviceId }), false);
+  assert.equal(
+    matchesPair(trainer, { ...trainee, local_device_id: trainerDeviceId }),
+    false,
+  );
 });
 
 test("delivery bundle separates a readable PDF and the addressed encrypted package", async () => {
   const now = Date.now();
   const header = {
-    packageId, linkId, senderDeviceId: traineeDeviceId, recipientDeviceId: trainerDeviceId,
-    type: "result", createdAt: now, expiresAt: now + 30 * 24 * 60 * 60 * 1000, version: 1, programVersion: null,
+    packageId,
+    linkId,
+    senderDeviceId: traineeDeviceId,
+    recipientDeviceId: trainerDeviceId,
+    type: "result",
+    createdAt: now,
+    expiresAt: now + 30 * 24 * 60 * 60 * 1000,
+    version: 1,
+    programVersion: null,
   };
   const encrypted = {
-    format: "reptrack-exchange", version: 1,
+    format: "reptrack-exchange",
+    version: 1,
     aad: Buffer.from(JSON.stringify(header)).toString("base64"),
     nonce: Buffer.alloc(12, 7).toString("base64"),
     ciphertext: Buffer.alloc(32, 9).toString("base64"),
   };
   const pdf = Buffer.from("%PDF-1.7\nreadable report");
-  const bundle = gzipSync(Buffer.from(JSON.stringify({
-    format: "reptrack-telegram-delivery", version: 1, linkId, packageId,
-    senderDeviceId: traineeDeviceId, recipientDeviceId: trainerDeviceId, sessionId,
-    planName: "Тренировка", startedAt: now - 60_000, endedAt: now,
-    durationMinutes: 1, exerciseCount: 2, completedWorkSets: 5,
-    reportPdf: pdf.toString("base64"), resultPackage: Buffer.from(JSON.stringify(encrypted)).toString("base64"),
-  })));
+  const bundle = gzipSync(
+    Buffer.from(
+      JSON.stringify({
+        format: "reptrack-telegram-delivery",
+        version: 1,
+        linkId,
+        packageId,
+        senderDeviceId: traineeDeviceId,
+        recipientDeviceId: trainerDeviceId,
+        sessionId,
+        planName: "Тренировка",
+        startedAt: now - 60_000,
+        endedAt: now,
+        durationMinutes: 1,
+        exerciseCount: 2,
+        completedWorkSets: 5,
+        reportPdf: pdf.toString("base64"),
+        resultPackage: Buffer.from(JSON.stringify(encrypted)).toString(
+          "base64",
+        ),
+      }),
+    ),
+  );
 
   const delivery = await parseDelivery(new Uint8Array(bundle));
   assert.equal(delivery.linkId, linkId);
   assert.deepEqual(Buffer.from(delivery.reportPdf), pdf);
-  assert.deepEqual(Buffer.from(delivery.resultPackage), Buffer.from(JSON.stringify(encrypted)));
+  assert.deepEqual(
+    Buffer.from(delivery.resultPackage),
+    Buffer.from(JSON.stringify(encrypted)),
+  );
 });
 
 test("delivery parser rejects a mismatched envelope recipient", async () => {
   const now = Date.now();
   const header = {
-    packageId, linkId, senderDeviceId: traineeDeviceId,
-    recipientDeviceId: "66666666-6666-4666-8666-666666666666", type: "result",
-    createdAt: now, expiresAt: now + 60_000, version: 1, programVersion: null,
+    packageId,
+    linkId,
+    senderDeviceId: traineeDeviceId,
+    recipientDeviceId: "66666666-6666-4666-8666-666666666666",
+    type: "result",
+    createdAt: now,
+    expiresAt: now + 60_000,
+    version: 1,
+    programVersion: null,
   };
   const encrypted = {
-    format: "reptrack-exchange", version: 1,
+    format: "reptrack-exchange",
+    version: 1,
     aad: Buffer.from(JSON.stringify(header)).toString("base64"),
-    nonce: Buffer.alloc(12).toString("base64"), ciphertext: Buffer.alloc(16).toString("base64"),
+    nonce: Buffer.alloc(12).toString("base64"),
+    ciphertext: Buffer.alloc(16).toString("base64"),
   };
-  const bundle = gzipSync(Buffer.from(JSON.stringify({
-    format: "reptrack-telegram-delivery", version: 1, linkId, packageId,
-    senderDeviceId: traineeDeviceId, recipientDeviceId: trainerDeviceId, sessionId,
-    planName: "Тренировка", startedAt: now - 60_000, endedAt: now,
-    durationMinutes: 1, exerciseCount: 0, completedWorkSets: 0,
-    reportPdf: Buffer.from("%PDF-test").toString("base64"), resultPackage: Buffer.from(JSON.stringify(encrypted)).toString("base64"),
-  })));
+  const bundle = gzipSync(
+    Buffer.from(
+      JSON.stringify({
+        format: "reptrack-telegram-delivery",
+        version: 1,
+        linkId,
+        packageId,
+        senderDeviceId: traineeDeviceId,
+        recipientDeviceId: trainerDeviceId,
+        sessionId,
+        planName: "Тренировка",
+        startedAt: now - 60_000,
+        endedAt: now,
+        durationMinutes: 1,
+        exerciseCount: 0,
+        completedWorkSets: 0,
+        reportPdf: Buffer.from("%PDF-test").toString("base64"),
+        resultPackage: Buffer.from(JSON.stringify(encrypted)).toString(
+          "base64",
+        ),
+      }),
+    ),
+  );
   await assert.rejects(parseDelivery(new Uint8Array(bundle)), /does not match/);
 });
 
 test("program routing accepts a current package only when its header has a version", () => {
   const now = Date.now();
   const header = {
-    packageId, linkId, senderDeviceId: trainerDeviceId, recipientDeviceId: traineeDeviceId,
-    type: "program", createdAt: now, expiresAt: now + 60_000, version: 1, programVersion: 4,
+    packageId,
+    linkId,
+    senderDeviceId: trainerDeviceId,
+    recipientDeviceId: traineeDeviceId,
+    type: "program",
+    createdAt: now,
+    expiresAt: now + 60_000,
+    version: 1,
+    programVersion: 4,
   };
-  const bytes = new TextEncoder().encode(JSON.stringify({
-    format: "reptrack-exchange", version: 1,
-    aad: Buffer.from(JSON.stringify(header)).toString("base64"),
-    nonce: Buffer.alloc(12).toString("base64"), ciphertext: Buffer.alloc(16).toString("base64"),
-  }));
+  const bytes = new TextEncoder().encode(
+    JSON.stringify({
+      format: "reptrack-exchange",
+      version: 1,
+      aad: Buffer.from(JSON.stringify(header)).toString("base64"),
+      nonce: Buffer.alloc(12).toString("base64"),
+      ciphertext: Buffer.alloc(16).toString("base64"),
+    }),
+  );
 
   assert.equal(parseExchangeHeader(bytes, "program").programVersion, 4);
-  assert.throws(() => parseExchangeHeader(bytes, "result"), /Invalid encrypted package/);
+  assert.throws(
+    () => parseExchangeHeader(bytes, "result"),
+    /Invalid encrypted package/,
+  );
 });

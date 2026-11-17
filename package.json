@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "scripts": {
+    "format:check": "prettier --check \"telegram-bot/src/**/*.mjs\" \"telegram-bot/test/**/*.mjs\" \"web/**/*.{js,mjs,cjs,jsx,ts,tsx,html,css,json}\""
+  },
+  "devDependencies": {
+    "prettier": "3.10.1"
+  }
+}

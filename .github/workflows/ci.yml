@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  telegram-and-web:
+    name: Telegram checks and web formatting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Check Telegram worker syntax
+        run: node --check telegram-bot/src/index.mjs
+
+      - name: Run Telegram unit tests
+        run: node --test telegram-bot/test/index.test.mjs
+
+      - name: Install pinned Prettier
+        run: npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund
+
+      - name: Check JavaScript and web formatting
+        run: npm run format:check
+
+  android:
+    name: Android lint, unit tests, and build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
+
+      - name: Check changed Kotlin sources with KtLint
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        working-directory: android
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            changed="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- 'android/**/*.kt')"
+          elif [[ -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then
+            changed="$(git ls-files 'android/**/*.kt')"
+          else
+            changed="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- 'android/**/*.kt')"
+          fi
+          files="$(printf '%s\n' "$changed" | sed '/^$/d' | paste -sd, -)"
+          if [[ -n "$files" ]]; then
+            printf 'KtLint files: %s\n' "$files"
+            ./gradlew :app:ktlintCheck "-PktlintChangedFiles=$files"
+          else
+            echo "No Kotlin source changes."
+          fi
+
+      - name: Run Android lint, unit tests, and debug build
+        working-directory: android
+        run: bash ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug

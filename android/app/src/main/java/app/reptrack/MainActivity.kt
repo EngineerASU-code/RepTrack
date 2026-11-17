@@ -566,8 +566,8 @@ private fun CoachScreen(state: DiarySnapshot, vm: DiaryViewModel, modifier: Modi
         if (showDemoProfile) OutlinedButton(onClick = openDemoProfile, modifier = Modifier.fillMaxWidth()) {
             Text("Создать / открыть тестовый профиль")
         }
-        if (showDemoProfile) OutlinedButton(onClick = { vm.createSourceReportsProfile() }, modifier = Modifier.fillMaxWidth()) {
-            Text("Импортировать мои отчёты тренировок")
+        if (showDemoProfile) OutlinedButton(onClick = { vm.createDemoReportsProfile() }, modifier = Modifier.fillMaxWidth()) {
+            Text("Загрузить демонстрационные тренировки")
         }
         OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth(), label = { Text("Поиск профиля") }, singleLine = true)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

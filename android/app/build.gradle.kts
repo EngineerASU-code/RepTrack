@@ -2,6 +2,39 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jlleitschuh.gradle.ktlint")
+}
+
+val ktlintChangedFiles = providers.gradleProperty("ktlintChangedFiles")
+    .orNull
+    ?.split(',')
+    ?.map(String::trim)
+    ?.filter(String::isNotEmpty)
+    ?.toSet()
+val repositoryRootPath = rootProject.projectDir.parentFile.absolutePath.replace('\\', '/')
+val ktlintChangedAbsolutePaths = ktlintChangedFiles?.map { "$repositoryRootPath/$it" }?.toSet()
+
+ktlint {
+    version.set("1.5.0")
+    baseline.set(file("ktlint-baseline.xml"))
+    additionalEditorconfig.set(
+        mapOf(
+            "ktlint_code_style" to "android_studio",
+            "ktlint_function_naming_ignore_when_annotated_with" to "Composable",
+            "max_line_length" to "140",
+            "ij_kotlin_allow_trailing_comma" to "true",
+            "ij_kotlin_allow_trailing_comma_on_call_site" to "true",
+            "ktlint_standard_property-naming" to "disabled",
+        ),
+    )
+    if (ktlintChangedAbsolutePaths != null) {
+        filter {
+            exclude { element ->
+                val absolutePath = element.file.absolutePath.replace('\\', '/')
+                !element.isDirectory && absolutePath !in ktlintChangedAbsolutePaths
+            }
+        }
+    }
 }
 
 android {
