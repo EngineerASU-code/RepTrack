@@ -4,16 +4,24 @@ import android.database.sqlite.SQLiteDatabase
 import android.graphics.Bitmap
 import android.view.WindowInsets
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.*
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /** C04/S03: the last workout field and pinned finish action remain usable with the numeric IME open. */
 @RunWith(AndroidJUnit4::class)
@@ -35,7 +43,7 @@ class WorkoutImeAcceptanceTest {
 
             scenario = ActivityScenario.launch(MainActivity::class.java)
             compose.waitUntil(15_000) {
-                compose.onAllNodesWithText("Демо", substring = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithTag("start-workout").fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithTag("start-workout").performScrollTo().performClick()
             compose.waitUntil(10_000) { repository.load().activeSession != null }
@@ -54,7 +62,9 @@ class WorkoutImeAcceptanceTest {
                         val insets = activity.window.decorView.rootWindowInsets
                         insets?.isVisible(WindowInsets.Type.ime()) == true &&
                             insets.getInsets(WindowInsets.Type.ime()).bottom > 0
-                    } else false
+                    } else {
+                        false
+                    }
                 }
                 imeVisible
             }

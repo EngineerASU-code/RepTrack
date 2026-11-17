@@ -1,12 +1,12 @@
 package app.reptrack
 
+import java.security.KeyPairGenerator
+import java.security.spec.ECGenParameterSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.security.KeyPairGenerator
-import java.security.spec.ECGenParameterSpec
 
 class SecureExchangeTest {
     @Test

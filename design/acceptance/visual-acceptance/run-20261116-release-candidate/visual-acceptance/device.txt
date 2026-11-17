@@ -1,7 +1,0 @@
-Android=35
-viewport=411x914dp
-density=2.625
-fontScale=1.0
-theme=PURPLE_PRO
-profile=isolated demo
-capture=Compose root and full device display

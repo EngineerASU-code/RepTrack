@@ -19,12 +19,47 @@ class MuscleMapMappingTest {
         )
 
         val cases = listOf(
-            Expected("жим штанги средним хватом", "Barbell Bench Press - Medium Grip", listOf(ExerciseMuscleGroup.CHEST), listOf(ExerciseMuscleGroup.TRICEPS, ExerciseMuscleGroup.SHOULDERS)),
-            Expected("тяга верхнего блока широким хватом", "Wide-Grip Lat Pulldown", listOf(ExerciseMuscleGroup.LATS), listOf(ExerciseMuscleGroup.BICEPS, ExerciseMuscleGroup.MIDDLE_BACK, ExerciseMuscleGroup.SHOULDERS)),
-            Expected("приседания со штангой", "Barbell Squat", listOf(ExerciseMuscleGroup.QUADRICEPS), listOf(ExerciseMuscleGroup.CALVES, ExerciseMuscleGroup.GLUTES, ExerciseMuscleGroup.HAMSTRINGS, ExerciseMuscleGroup.LOWER_BACK)),
-            Expected("жим ногами", "Leg Press", listOf(ExerciseMuscleGroup.QUADRICEPS), listOf(ExerciseMuscleGroup.CALVES, ExerciseMuscleGroup.GLUTES, ExerciseMuscleGroup.HAMSTRINGS)),
-            Expected("тяга нижнего блока узким хватом", "Seated Cable Rows", listOf(ExerciseMuscleGroup.MIDDLE_BACK), listOf(ExerciseMuscleGroup.BICEPS, ExerciseMuscleGroup.LATS, ExerciseMuscleGroup.SHOULDERS)),
-            Expected("попеременные молотки с гантелями", "Alternate Hammer Curl", listOf(ExerciseMuscleGroup.BICEPS), listOf(ExerciseMuscleGroup.FOREARMS)),
+            Expected(
+                "жим штанги средним хватом",
+                "Barbell Bench Press - Medium Grip",
+                listOf(ExerciseMuscleGroup.CHEST),
+                listOf(ExerciseMuscleGroup.TRICEPS, ExerciseMuscleGroup.SHOULDERS),
+            ),
+            Expected(
+                "тяга верхнего блока широким хватом",
+                "Wide-Grip Lat Pulldown",
+                listOf(ExerciseMuscleGroup.LATS),
+                listOf(ExerciseMuscleGroup.BICEPS, ExerciseMuscleGroup.MIDDLE_BACK, ExerciseMuscleGroup.SHOULDERS),
+            ),
+            Expected(
+                "приседания со штангой",
+                "Barbell Squat",
+                listOf(ExerciseMuscleGroup.QUADRICEPS),
+                listOf(
+                    ExerciseMuscleGroup.CALVES,
+                    ExerciseMuscleGroup.GLUTES,
+                    ExerciseMuscleGroup.HAMSTRINGS,
+                    ExerciseMuscleGroup.LOWER_BACK,
+                ),
+            ),
+            Expected(
+                "жим ногами",
+                "Leg Press",
+                listOf(ExerciseMuscleGroup.QUADRICEPS),
+                listOf(ExerciseMuscleGroup.CALVES, ExerciseMuscleGroup.GLUTES, ExerciseMuscleGroup.HAMSTRINGS),
+            ),
+            Expected(
+                "тяга нижнего блока узким хватом",
+                "Seated Cable Rows",
+                listOf(ExerciseMuscleGroup.MIDDLE_BACK),
+                listOf(ExerciseMuscleGroup.BICEPS, ExerciseMuscleGroup.LATS, ExerciseMuscleGroup.SHOULDERS),
+            ),
+            Expected(
+                "попеременные молотки с гантелями",
+                "Alternate Hammer Curl",
+                listOf(ExerciseMuscleGroup.BICEPS),
+                listOf(ExerciseMuscleGroup.FOREARMS),
+            ),
         )
 
         cases.forEach { expected ->

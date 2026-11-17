@@ -1,5 +1,6 @@
 package app.reptrack
 
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -12,11 +13,24 @@ internal data class ArchivedDiary(
     val assignments: List<ProgramAssignment>,
     val acceptedIncoming: List<ArchivedIncomingProgram>,
 )
-internal data class ArchivedIncomingProgram(val profileId: String, val remotePlanId: String, val localPlanId: String?, val appliedVersion: Int, val appliedLocalVersion: Int, val pendingVersion: Int, val planJson: String, val packageId: String)
+internal data class ArchivedIncomingProgram(
+    val profileId: String,
+    val remotePlanId: String,
+    val localPlanId: String?,
+    val appliedVersion: Int,
+    val appliedLocalVersion: Int,
+    val pendingVersion: Int,
+    val planJson: String,
+    val packageId: String,
+)
 
 internal fun describePlanChanges(current: TrainingPlan, incoming: TrainingPlan): List<String> = buildList {
     if (current.name != incoming.name) add("Название: ${current.name} → ${incoming.name}")
-    if (current.inCycle != incoming.inCycle) add(if (incoming.inCycle) "Программа будет добавлена в цикл" else "Программа будет убрана из цикла")
+    if (current.inCycle !=
+        incoming.inCycle
+    ) {
+        add(if (incoming.inCycle) "Программа будет добавлена в цикл" else "Программа будет убрана из цикла")
+    }
     for (index in 0 until maxOf(current.exercises.size, incoming.exercises.size)) {
         val old = current.exercises.getOrNull(index)
         val new = incoming.exercises.getOrNull(index)
@@ -42,35 +56,71 @@ internal fun encodeDiaryArchive(
     acceptedIncoming: List<ArchivedIncomingProgram> = emptyList(),
 ): ByteArray = JSONObject()
     .put("format", "reptrack-backup")
-    .put("version", 4)
+    .put("version", 5)
     .put("activeProfileId", activeProfileId)
     .put("profiles", JSONArray().apply { profiles.forEach { put(it.toJson()) } })
     .put("plans", JSONArray().apply { plans.forEach { put(it.toJson().put("ownerId", it.ownerId)) } })
     .put("sessions", JSONArray().apply { sessions.forEach { put(it.toJson()) } })
     .put("assignments", JSONArray().apply { assignments.forEach { put(it.toJson()) } })
     .put("acceptedIncoming", JSONArray().apply { acceptedIncoming.forEach { put(it.toJson()) } })
-    .put("settings", JSONObject().put("weightUnit", settings.weightUnit.name).put("theme", settings.theme.name).put("restTimerEnabled", settings.restTimerEnabled))
+    .put(
+        "settings",
+        JSONObject().put(
+            "weightUnit",
+            settings.weightUnit.name,
+        ).put("theme", settings.theme.name).put("restTimerEnabled", settings.restTimerEnabled).put("userRole", settings.userRole.name),
+    )
     .toString().toByteArray(Charsets.UTF_8)
 
 internal fun decodeDiaryArchive(json: ByteArray): ArchivedDiary {
     val root = JSONObject(json.toString(Charsets.UTF_8))
     val version = root.optInt("version")
-    require(root.optString("format") == "reptrack-backup" && version in 1..4) { "Неизвестная версия резервной копии" }
+    require(root.optString("format") == "reptrack-backup" && version in 1..5) { "Неизвестная версия резервной копии" }
     val plans = root.requireArray("plans").toObjects(::parsePlan, max = 500)
     val sessions = root.requireArray("sessions").toObjects(::parseSession, max = 20_000)
-    val profiles = if (version == 1) listOf(DiaryProfile(personalProfileId, "Мой дневник", ProfileKind.PERSONAL, 0L))
-        else root.requireArray("profiles").toObjects(::parseProfile, max = 5_000)
+    val profiles = if (version == 1) {
+        listOf(DiaryProfile(personalProfileId, "Мой дневник", ProfileKind.PERSONAL, 0L))
+    } else {
+        root.requireArray("profiles").toObjects({ parseProfile(it, version >= 5) }, max = 5_000)
+    }
     val assignments = if (version < 3) emptyList() else root.requireArray("assignments").toObjects(::parseAssignment, max = 20_000)
-    val acceptedIncoming = if (version < 4) emptyList() else root.requireArray("acceptedIncoming").toObjects(::parseArchivedIncoming, max = 5_000)
-    require(profiles.map { it.id }.distinct().size == profiles.size && profiles.count { it.kind == ProfileKind.PERSONAL } == 1) { "В копии некорректный список профилей" }
+    val acceptedIncoming = if (version <
+        4
+    ) {
+        emptyList()
+    } else {
+        root.requireArray("acceptedIncoming").toObjects(::parseArchivedIncoming, max = 5_000)
+    }
+    require(
+        profiles.map {
+            it.id
+        }.distinct().size == profiles.size &&
+            profiles.count {
+                it.kind == ProfileKind.PERSONAL
+            } == 1,
+    ) { "В копии некорректный список профилей" }
+    require(profiles.map { it.publicId }.distinct().size == profiles.size) { "В копии повторяется публичный ID профиля" }
     require(profiles.single { it.kind == ProfileKind.PERSONAL }.id == personalProfileId) { "В копии некорректный личный профиль" }
     val profileIds = profiles.mapTo(mutableSetOf()) { it.id }
     require(plans.all { it.ownerId in profileIds } && sessions.all { it.ownerId in profileIds }) { "В копии найдены данные без профиля" }
-    require(assignments.all { assignment -> assignment.profileId in profileIds && plans.any { it.id == assignment.assignedPlanId && it.ownerId == assignment.profileId } }) { "В копии найдено назначение без профиля или программы" }
+    require(
+        assignments.all { assignment ->
+            assignment.profileId in profileIds &&
+                plans.any { it.id == assignment.assignedPlanId && it.ownerId == assignment.profileId }
+        },
+    ) { "В копии найдено назначение без профиля или программы" }
     require(assignments.map { it.id }.distinct().size == assignments.size) { "В копии повторяется ID назначения" }
     require(acceptedIncoming.all { it.profileId in profileIds }) { "В копии найдено принятое обновление без профиля" }
-    require(acceptedIncoming.map { it.profileId to it.remotePlanId }.distinct().size == acceptedIncoming.size) { "В копии повторяется принятое обновление" }
-    require(sessions.filter { it.status == SessionStatus.ACTIVE }.groupingBy { it.ownerId }.eachCount().values.all { it <= 1 }) { "В копии у профиля несколько активных тренировок" }
+    require(
+        acceptedIncoming.map {
+            it.profileId to it.remotePlanId
+        }.distinct().size == acceptedIncoming.size,
+    ) { "В копии повторяется принятое обновление" }
+    require(
+        sessions.filter {
+            it.status == SessionStatus.ACTIVE
+        }.groupingBy { it.ownerId }.eachCount().values.all { it <= 1 },
+    ) { "В копии у профиля несколько активных тренировок" }
     val activeProfileId = if (version == 1) personalProfileId else root.requireString("activeProfileId", 128)
     require(activeProfileId in profileIds) { "В копии не найден выбранный профиль" }
     val settingsJson = root.optJSONObject("settings") ?: error("В копии отсутствуют настройки")
@@ -78,22 +128,45 @@ internal fun decodeDiaryArchive(json: ByteArray): ArchivedDiary {
         weightUnit = runCatching { WeightUnit.valueOf(settingsJson.optString("weightUnit")) }.getOrDefault(WeightUnit.KG),
         theme = runCatching { DiaryTheme.valueOf(settingsJson.optString("theme")) }.getOrDefault(DiaryTheme.PURPLE_PRO),
         restTimerEnabled = settingsJson.optBoolean("restTimerEnabled", true),
+        userRole = runCatching {
+            UserRole.valueOf(settingsJson.optString("userRole", "SELF_DIRECTED"))
+        }.getOrDefault(UserRole.SELF_DIRECTED),
     )
     return ArchivedDiary(plans, sessions, settings, profiles, activeProfileId, assignments, acceptedIncoming)
 }
 
-private fun ArchivedIncomingProgram.toJson() = JSONObject().put("profileId", profileId).put("remotePlanId", remotePlanId).put("localPlanId", localPlanId ?: JSONObject.NULL)
-    .put("appliedVersion", appliedVersion).put("appliedLocalVersion", appliedLocalVersion).put("pendingVersion", pendingVersion).put("planJson", planJson).put("packageId", packageId)
+private fun ArchivedIncomingProgram.toJson() = JSONObject().put("profileId", profileId).put("remotePlanId", remotePlanId).put(
+    "localPlanId",
+    localPlanId ?: JSONObject.NULL,
+)
+    .put(
+        "appliedVersion",
+        appliedVersion,
+    ).put(
+        "appliedLocalVersion",
+        appliedLocalVersion,
+    ).put("pendingVersion", pendingVersion).put("planJson", planJson).put("packageId", packageId)
 
 private fun parseArchivedIncoming(json: JSONObject): ArchivedIncomingProgram {
     val planJson = json.requireString("planJson", 2_000_000)
     val plan = decodePlanExport(planJson.toByteArray(Charsets.UTF_8)).singleOrNull() ?: error("В копии повреждено принятое обновление")
-    val version = json.nonNegative("pendingVersion").also { require(it == plan.version) { "В копии версия обновления не совпадает с программой" } }
+    val version = json.nonNegative("pendingVersion").also {
+        require(it == plan.version) { "В копии версия обновления не совпадает с программой" }
+    }
     val remotePlanId = json.requireString("remotePlanId", 128)
     require(plan.id == remotePlanId) { "В копии ID обновления не совпадает с программой" }
     val appliedVersion = json.nonNegative("appliedVersion")
     require(version > appliedVersion) { "В копии некорректная версия обновления" }
-    return ArchivedIncomingProgram(json.requireString("profileId", 128), remotePlanId, if (json.isNull("localPlanId")) null else json.requireString("localPlanId", 128), appliedVersion, json.nonNegative("appliedLocalVersion"), version, planJson, json.requireString("packageId", 128))
+    return ArchivedIncomingProgram(
+        json.requireString("profileId", 128),
+        remotePlanId,
+        if (json.isNull("localPlanId")) null else json.requireString("localPlanId", 128),
+        appliedVersion,
+        json.nonNegative("appliedLocalVersion"),
+        version,
+        planJson,
+        json.requireString("packageId", 128),
+    )
 }
 
 internal fun encodePlanExport(plans: List<TrainingPlan>): ByteArray = JSONObject()
@@ -106,27 +179,81 @@ internal fun decodePlanExport(json: ByteArray): List<TrainingPlan> {
     val root = JSONObject(json.toString(Charsets.UTF_8))
     require(root.optString("format") == "reptrack-plans" && root.optInt("version") in 1..2) { "Файл не является экспортом планов RepTrack" }
     val plans = root.requireArray("plans").toObjects(::parsePlan, max = 500)
-    require(plans.map { it.id }.distinct().size == plans.size && plans.all { it.exercises.map(PlanExercise::id).distinct().size == it.exercises.size }) { "В файле повторяются ID планов или упражнений" }
+    require(
+        plans.map { it.id }.distinct().size == plans.size &&
+            plans.all {
+                it.exercises.map(PlanExercise::id).distinct().size == it.exercises.size
+            },
+    ) { "В файле повторяются ID планов или упражнений" }
     return plans
 }
 
-internal fun encodeResultExport(sessions: List<TrainingSession>): ByteArray {
+internal fun encodeResultExport(sessions: List<TrainingSession>): ByteArray = encodeResultExportPayload(sessions, null)
+
+internal data class ResultExportAuthor(val displayName: String, val publicId: String, val role: UserRole)
+internal data class DecodedResultExport(val sessions: List<TrainingSession>, val author: ResultExportAuthor?)
+
+internal fun encodeResultExport(sessions: List<TrainingSession>, author: ResultExportAuthor): ByteArray =
+    encodeResultExportPayload(sessions, author)
+
+private fun encodeResultExportPayload(sessions: List<TrainingSession>, author: ResultExportAuthor?): ByteArray {
     require(sessions.isNotEmpty()) { "Отчёт не содержит тренировок" }
-    require(sessions.all { it.status == SessionStatus.COMPLETED && it.endedAt != null }) { "В отчёт можно добавить только завершённые тренировки" }
+    require(
+        sessions.all {
+            it.status == SessionStatus.COMPLETED && it.endedAt != null
+        },
+    ) { "В отчёт можно добавить только завершённые тренировки" }
     require(sessions.map { it.ownerId }.distinct().size == 1) { "Отчёт может содержать историю только одного профиля" }
-    return JSONObject().put("format", "reptrack-results").put("version", 1)
+    author?.let {
+        require(it.displayName.isNotBlank() && it.displayName.length <= 64) { "Некорректное имя автора отчёта" }
+        require(it.publicId.isValidPublicId()) { "Некорректный публичный ID автора отчёта" }
+    }
+    val root = JSONObject().put("format", "reptrack-results").put("version", if (author == null) 1 else 2)
         .put("sessions", JSONArray().apply { sessions.forEach { put(it.toJson()) } })
-        .toString().toByteArray(Charsets.UTF_8)
+    if (author !=
+        null
+    ) {
+        root.put(
+            "author",
+            JSONObject().put("displayName", author.displayName).put("publicId", author.publicId).put("role", author.role.name),
+        )
+    }
+    return root.toString().toByteArray(Charsets.UTF_8)
 }
 
-internal fun decodeResultExport(bytes: ByteArray): List<TrainingSession> {
+internal fun decodeResultExport(bytes: ByteArray): List<TrainingSession> = decodeResultExportEnvelope(bytes).sessions
+
+internal fun decodeResultExportEnvelope(bytes: ByteArray): DecodedResultExport {
     require(bytes.size in 1..maxExchangePayloadBytes) { "Отчёт слишком большой или пустой" }
     val root = JSONObject(bytes.toString(Charsets.UTF_8))
-    require(root.optString("format") == "reptrack-results" && root.optInt("version") == 1) { "Неизвестный формат отчёта" }
+    val version = root.optInt("version")
+    require(root.optString("format") == "reptrack-results" && version in 1..2) { "Неизвестный формат отчёта" }
     val sessions = root.requireArray("sessions").toObjects(::parseSession, max = 20_000)
     require(sessions.isNotEmpty()) { "Отчёт не содержит тренировок" }
-    require(sessions.map { it.id }.distinct().size == sessions.size && sessions.map { it.ownerId }.distinct().size == 1 && sessions.all { it.status == SessionStatus.COMPLETED && it.endedAt != null }) { "В отчёте повторяются записи, смешаны профили или есть незавершённые тренировки" }
-    return sessions
+    require(
+        sessions.map { it.id }.distinct().size == sessions.size &&
+            sessions.map { it.ownerId }.distinct().size == 1 &&
+            sessions.all {
+                it.status == SessionStatus.COMPLETED && it.endedAt != null
+            },
+    ) { "В отчёте повторяются записи, смешаны профили или есть незавершённые тренировки" }
+    val author = if (version == 1) {
+        null
+    } else {
+        val authorJson = root.optJSONObject("author") ?: error("В отчёте отсутствуют данные автора")
+        ResultExportAuthor(
+            displayName = authorJson.requireString("displayName", 64).also {
+                require(it.isNotBlank()) { "Некорректное имя автора отчёта" }
+            },
+            publicId = authorJson.requireString("publicId", 36).also {
+                require(it.isValidPublicId()) { "Некорректный публичный ID автора отчёта" }
+            },
+            role = runCatching {
+                UserRole.valueOf(authorJson.requireString("role", 32))
+            }.getOrElse { error("Некорректная роль автора отчёта") },
+        )
+    }
+    return DecodedResultExport(sessions, author)
 }
 
 private fun TrainingPlan.toJson() = JSONObject()
@@ -140,7 +267,10 @@ private fun PlanExercise.toJson() = JSONObject()
 
 internal fun TrainingSession.toJson() = JSONObject()
     .put("id", id).put("planId", planId ?: JSONObject.NULL).put("planName", planName).put("status", status.name)
-    .put("startedAt", startedAt).put("endedAt", endedAt ?: JSONObject.NULL).put("comment", comment).put("ownerId", ownerId).put("planVersion", planVersion)
+    .put(
+        "startedAt",
+        startedAt,
+    ).put("endedAt", endedAt ?: JSONObject.NULL).put("comment", comment).put("ownerId", ownerId).put("planVersion", planVersion)
     .put("exercises", JSONArray().apply { exercises.forEach { put(it.toJson()) } })
 
 private fun ProgramAssignment.toJson() = JSONObject()
@@ -150,7 +280,7 @@ private fun ProgramAssignment.toJson() = JSONObject()
     .put("pendingPlanJson", pendingPlanJson ?: JSONObject.NULL)
 
 private fun DiaryProfile.toJson() = JSONObject()
-    .put("id", id).put("name", name).put("kind", kind.name).put("createdAt", createdAt)
+    .put("id", id).put("publicId", publicId).put("name", name).put("kind", kind.name).put("createdAt", createdAt)
     .put("lastImportedAt", lastImportedAt ?: JSONObject.NULL)
 
 private fun SessionExercise.toJson() = JSONObject()
@@ -166,21 +296,35 @@ private fun parsePlan(json: JSONObject): TrainingPlan {
     val exercises = json.requireArray("exercises").toObjects(::parsePlanExercise, max = 500)
     val version = if (json.has("version")) json.nonNegative("version").coerceAtLeast(1) else 1
     return TrainingPlan(
-        json.requireString("id", 128), json.requireString("name", 48), json.nonNegative("position"),
-        json.optBoolean("inCycle"), exercises,
+        json.requireString("id", 128),
+        json.requireString("name", 48),
+        json.nonNegative("position"),
+        json.optBoolean("inCycle"),
+        exercises,
         if (json.has("ownerId")) json.requireString("ownerId", 128) else personalProfileId,
         version,
     )
 }
 
-private fun parseProfile(json: JSONObject): DiaryProfile {
+private fun parseProfile(json: JSONObject, hasPublicId: Boolean): DiaryProfile {
     val kind = runCatching { ProfileKind.valueOf(json.requireString("kind", 16)) }.getOrElse { error("Неизвестный тип профиля") }
     return DiaryProfile(
-        id = json.requireString("id", 128), name = json.requireString("name", 64), kind = kind,
+        id = json.requireString("id", 128),
+        name = json.requireString("name", 64),
+        kind = kind,
         createdAt = json.nonNegativeLong("createdAt"),
         lastImportedAt = json.optionalNonNegativeLong("lastImportedAt"),
+        publicId = if (hasPublicId) {
+            json.requireString("publicId", 36).also {
+                require(it.isValidPublicId()) { "В копии некорректный публичный ID профиля" }
+            }
+        } else {
+            UUID.randomUUID().toString()
+        },
     )
 }
+
+private fun String.isValidPublicId(): Boolean = runCatching { UUID.fromString(this).toString() == this }.getOrDefault(false)
 
 private fun parseAssignment(json: JSONObject): ProgramAssignment {
     val pendingJson = if (json.isNull("pendingPlanJson")) null else json.requireString("pendingPlanJson", 2_000_000)
@@ -200,7 +344,8 @@ private fun parseAssignment(json: JSONObject): ProgramAssignment {
 }
 
 private fun parsePlanExercise(json: JSONObject): PlanExercise = PlanExercise(
-    id = json.requireString("id", 128), name = json.requireString("name", 80),
+    id = json.requireString("id", 128),
+    name = json.requireString("name", 80),
     plannedSets = json.nonNegative("plannedSets").coerceIn(1, 20),
     targetWeight = json.requireString("targetWeight", 16).also { weight ->
         require(weight.isEmpty() || parseFiniteWeight(weight)?.let { it >= 0.0 } == true) { "В плане некорректный целевой вес" }
@@ -213,23 +358,40 @@ private fun parsePlanExercise(json: JSONObject): PlanExercise = PlanExercise(
 )
 
 internal fun parseSession(json: JSONObject): TrainingSession {
-    val status = runCatching { SessionStatus.valueOf(json.requireString("status", 16)) }.getOrElse { error("Неизвестный статус тренировки") }
+    val status = runCatching {
+        SessionStatus.valueOf(json.requireString("status", 16))
+    }.getOrElse { error("Неизвестный статус тренировки") }
     val planId = if (json.isNull("planId")) null else json.requireString("planId", 128)
     return TrainingSession(
         id = json.requireString("id", 128), planId = planId, planName = json.requireString("planName", 80), status = status,
         startedAt = json.nonNegativeLong("startedAt"), endedAt = json.optionalNonNegativeLong("endedAt"),
-        comment = json.requireString("comment", 1000), exercises = json.requireArray("exercises").toObjects(::parseSessionExercise, max = 1000),
+        comment = json.requireString(
+            "comment",
+            1000,
+        ),
+        exercises = json.requireArray("exercises").toObjects(::parseSessionExercise, max = 1000),
         ownerId = if (json.has("ownerId")) json.requireString("ownerId", 128) else personalProfileId,
         planVersion = if (json.has("planVersion")) json.nonNegative("planVersion").coerceAtLeast(1) else 1,
     ).also { session ->
-        require(session.status != SessionStatus.COMPLETED || session.endedAt != null && session.endedAt >= session.startedAt) { "В истории некорректные даты тренировки" }
-        require(session.status == SessionStatus.ACTIVE || session.status == SessionStatus.COMPLETED || session.status == SessionStatus.CANCELLED) { "Неизвестный статус тренировки" }
+        require(session.status != SessionStatus.COMPLETED || session.endedAt != null && session.endedAt >= session.startedAt) {
+            "В истории некорректные даты тренировки"
+        }
+        require(
+            session.status == SessionStatus.ACTIVE ||
+                session.status == SessionStatus.COMPLETED ||
+                session.status == SessionStatus.CANCELLED,
+        ) {
+            "Неизвестный статус тренировки"
+        }
     }
 }
 
 private fun parseSessionExercise(json: JSONObject): SessionExercise = SessionExercise(
-    id = json.requireString("id", 128), name = json.requireString("name", 80), position = json.nonNegative("position"),
-    skipped = json.optBoolean("skipped"), tracksLoad = json.optBoolean("tracksLoad", true),
+    id = json.requireString("id", 128),
+    name = json.requireString("name", 80),
+    position = json.nonNegative("position"),
+    skipped = json.optBoolean("skipped"),
+    tracksLoad = json.optBoolean("tracksLoad", true),
     sets = json.requireArray("sets").toObjects(::parseSet, max = 1000),
 )
 

@@ -1,0 +1,10 @@
+# Local reports, assistant handoffs and disposable build evidence
+/design/acceptance/
+/UI/
+/artifacts/*.apk
+/artifacts/*.sha256
+/tasks/*handoff*.md
+/tasks/omniroute-*
+/tools/omniroute-fallback/
+/android/build-*.log
+/node_modules/

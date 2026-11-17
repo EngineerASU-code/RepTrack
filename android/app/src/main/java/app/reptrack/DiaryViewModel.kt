@@ -14,7 +14,9 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     private val _snapshot = MutableStateFlow(DiarySnapshot())
     val snapshot: StateFlow<DiarySnapshot> = _snapshot
 
-    init { refresh() }
+    init {
+        refresh()
+    }
 
     fun refresh() = mutate { }
     fun start(planId: String?) = mutate { repository.start(planId) }
@@ -45,6 +47,7 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     fun setWeightUnit(unit: WeightUnit) = mutate { repository.setWeightUnit(unit) }
     fun setTheme(theme: DiaryTheme) = mutate { repository.setTheme(theme) }
     fun setRestTimerEnabled(enabled: Boolean) = mutate { repository.setRestTimerEnabled(enabled) }
+    fun setUserRole(role: UserRole) = mutate { repository.setUserRole(role) }
     fun createTraineeProfile(name: String) = mutate { repository.createTraineeProfile(name) }
     fun createDemoProfile() = mutate { repository.createDemoProfile() }
     fun createDemoReportsProfile() = mutate { repository.createDemoReportsProfile() }
@@ -54,30 +57,44 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     fun stageAssignmentUpdate(id: String) = mutate { repository.stageAssignmentUpdate(id) }
     fun acceptAssignmentUpdate(id: String) = mutate { repository.acceptAssignmentUpdate(id) }
     fun rejectAssignmentUpdate(id: String) = mutate { repository.rejectAssignmentUpdate(id) }
-    internal fun confirmPairing(id: String, onComplete: (String?) -> Unit = {}) = transferMutation(onComplete) { repository.confirmPairing(id) }
+    internal fun confirmPairing(id: String, onComplete: (String?) -> Unit = {}) =
+        transferMutation(onComplete) { repository.confirmPairing(id) }
     internal fun revokeLink(id: String, onComplete: (String?) -> Unit = {}) = transferMutation(onComplete) { repository.revokeLink(id) }
-    fun restoreEncryptedBackup(container: ByteArray, password: String, onComplete: (String?) -> Unit = {}) = transferMutation(onComplete) { repository.restoreEncryptedBackup(container, password) }
+    fun restoreEncryptedBackup(container: ByteArray, password: String, onComplete: (String?) -> Unit = {}) =
+        transferMutation(onComplete) { repository.restoreEncryptedBackup(container, password) }
     fun importPlans(json: ByteArray, onComplete: (String?) -> Unit = {}) = transferMutation(onComplete) { repository.importPlans(json) }
 
     fun createEncryptedBackup(password: String, onReady: (ByteArray) -> Unit) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { repository.createEncryptedBackup(password) } }
-            result.onSuccess(onReady).onFailure { error -> _snapshot.value = _snapshot.value.copy(error = error.message ?: "Не удалось создать резервную копию") }
+            result.onSuccess(onReady).onFailure { error ->
+                _snapshot.value =
+                    _snapshot.value.copy(error = error.message ?: "Не удалось создать резервную копию")
+            }
         }
     }
 
     fun exportPlans(onReady: (ByteArray) -> Unit) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { repository.exportPlans() } }
-            result.onSuccess(onReady).onFailure { error -> _snapshot.value = _snapshot.value.copy(error = error.message ?: "Не удалось экспортировать планы") }
+            result.onSuccess(onReady).onFailure { error ->
+                _snapshot.value =
+                    _snapshot.value.copy(error = error.message ?: "Не удалось экспортировать планы")
+            }
         }
     }
 
-    internal fun createPairingInvitation(profileId: String, onReady: (ByteArray) -> Unit) = transferOutput(onReady) { repository.createPairingInvitation(profileId) }
-    internal fun respondToPairingInvite(bytes: ByteArray, profileId: String, onReady: (PairingResponse) -> Unit) = transferOutput(onReady) { repository.respondToPairingInvite(bytes, profileId) }
-    internal fun processPairingResponse(bytes: ByteArray, onReady: (PairingPending) -> Unit) = transferOutput(onReady) { repository.processPairingResponse(bytes) }
-    internal fun createResultPackage(linkId: String, sessionIds: Set<String>, onReady: (ByteArray) -> Unit) = transferOutput(onReady) { repository.createResultPackage(linkId, sessionIds) }
-    internal fun createTelegramRouteFile(linkId: String, onReady: (ByteArray) -> Unit) = transferOutput(onReady) { repository.createTelegramRouteFile(linkId) }
+    internal fun createPairingInvitation(profileId: String, onReady: (ByteArray) -> Unit) = transferOutput(onReady) {
+        repository.createPairingInvitation(profileId)
+    }
+    internal fun respondToPairingInvite(bytes: ByteArray, profileId: String, onReady: (PairingResponse) -> Unit) =
+        transferOutput(onReady) { repository.respondToPairingInvite(bytes, profileId) }
+    internal fun processPairingResponse(bytes: ByteArray, onReady: (PairingPending) -> Unit) =
+        transferOutput(onReady) { repository.processPairingResponse(bytes) }
+    internal fun createResultPackage(linkId: String, sessionIds: Set<String>, onReady: (ByteArray) -> Unit) =
+        transferOutput(onReady) { repository.createResultPackage(linkId, sessionIds) }
+    internal fun createTelegramRouteFile(linkId: String, onReady: (ByteArray) -> Unit) =
+        transferOutput(onReady) { repository.createTelegramRouteFile(linkId) }
     internal fun finishAndCreateTelegramDelivery(linkId: String, sessionId: String, onComplete: (ByteArray?, String?) -> Unit) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { repository.finishAndCreateTelegramDelivery(linkId, sessionId) } }
@@ -96,12 +113,17 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             result.onSuccess { onComplete(it, null) }.onFailure { onComplete(null, it.message ?: "Не удалось подготовить отчёт") }
         }
     }
-    internal fun createProgramPackage(linkId: String, planId: String, onReady: (ByteArray) -> Unit) = transferOutput(onReady) { repository.createProgramPackage(linkId, planId) }
-    internal fun previewExchange(bytes: ByteArray, onReady: (ExchangePreview) -> Unit) = transferOutput(onReady) { repository.previewExchange(bytes) }
+    internal fun createProgramPackage(linkId: String, planId: String, onReady: (ByteArray) -> Unit) =
+        transferOutput(onReady) { repository.createProgramPackage(linkId, planId) }
+    internal fun previewExchange(bytes: ByteArray, onReady: (ExchangePreview) -> Unit) =
+        transferOutput(onReady) { repository.previewExchange(bytes) }
     internal fun acceptExchange(bytes: ByteArray, onComplete: (ExchangeImportResult?, String?) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { repository.acceptExchange(bytes) to repository.load() } }
-            result.onSuccess { (output, snapshot) -> _snapshot.value = snapshot; onComplete(output, null) }
+            result.onSuccess { (output, snapshot) ->
+                _snapshot.value = snapshot
+                onComplete(output, null)
+            }
                 .onFailure { error ->
                     val message = error.message ?: "Не удалось принять пакет"
                     _snapshot.value = _snapshot.value.copy(error = message)
@@ -109,20 +131,32 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
                 }
         }
     }
-    internal fun rejectExchange(bytes: ByteArray, onComplete: (String?) -> Unit = {}) = transferMutation(onComplete) { repository.rejectExchange(bytes) }
+    internal fun rejectExchange(bytes: ByteArray, onComplete: (String?) -> Unit = {}) =
+        transferMutation(onComplete) { repository.rejectExchange(bytes) }
 
     private fun <T> transferOutput(onReady: (T) -> Unit, action: () -> T) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) { runCatching { action() to repository.load() } }
-            result.onSuccess { (output, snapshot) -> _snapshot.value = snapshot; onReady(output) }
+            result.onSuccess { (output, snapshot) ->
+                _snapshot.value = snapshot
+                onReady(output)
+            }
                 .onFailure { error -> _snapshot.value = _snapshot.value.copy(error = error.message ?: "Не удалось обработать файл обмена") }
         }
     }
 
     private fun transferMutation(onComplete: (String?) -> Unit, action: () -> Unit) {
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) { runCatching { action(); repository.load() } }
-            result.onSuccess { _snapshot.value = it; onComplete(null) }
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    action()
+                    repository.load()
+                }
+            }
+            result.onSuccess {
+                _snapshot.value = it
+                onComplete(null)
+            }
                 .onFailure { error ->
                     val message = error.message ?: "Не удалось импортировать данные"
                     _snapshot.value = _snapshot.value.copy(error = message)
@@ -134,10 +168,22 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     private fun mutate(action: () -> Unit) {
         viewModelScope.launch {
             _snapshot.value = withContext(Dispatchers.IO) {
-                runCatching { action(); repository.load() }.getOrElse { _snapshot.value.copy(loading = false, error = it.message ?: "Не удалось сохранить данные") }
+                runCatching {
+                    action()
+                    repository.load()
+                }.getOrElse {
+                    _snapshot.value.copy(
+                        loading = false,
+                        error =
+                        it.message ?: "Не удалось сохранить данные",
+                    )
+                }
             }
         }
     }
 
-    override fun onCleared() { repository.close(); super.onCleared() }
+    override fun onCleared() {
+        repository.close()
+        super.onCleared()
+    }
 }

@@ -8,11 +8,11 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,7 +25,7 @@ class AccessibilityAdaptiveTest {
     fun rootNavigationKeepsLabelsAndRouteAtLargeFontAndRespectsNavigationInset() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originalFontScale = ParcelFileDescriptor.AutoCloseInputStream(
-            instrumentation.uiAutomation.executeShellCommand("settings get system font_scale")
+            instrumentation.uiAutomation.executeShellCommand("settings get system font_scale"),
         ).bufferedReader().use { it.readText().trim() }.takeIf { it.toFloatOrNull() != null } ?: "1.0"
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {

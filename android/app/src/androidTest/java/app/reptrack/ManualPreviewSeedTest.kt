@@ -32,7 +32,13 @@ class ManualPreviewSeedTest {
             assertTrue("Ambiguous lat-pulldown alias must not remain in the demo plans", "Тяга верхнего блока" !in demoExercises)
             assertTrue("Ambiguous cable-row alias must not remain in the demo plans", "Тяга нижнего блока" !in demoExercises)
             assertTrue("Ambiguous hammer-curl alias must not remain in the demo plans", "Молотки с гантелями" !in demoExercises)
-            assertTrue("Demo history exercise names must match the exact cable-row variant", demo.history.flatMap { it.exercises }.any { it.name == "Тяга нижнего блока узким хватом" })
+            assertTrue(
+                "Demo history exercise names must match the exact cable-row variant",
+                demo.history.flatMap { it.exercises }.any {
+                    it.name ==
+                        "Тяга нижнего блока узким хватом"
+                },
+            )
             assertNotNull(demo.nextPlan)
             assertEquals(12, demo.history.size)
             assertNotNull(demo.bestByExercise["Жим штанги средним хватом"])

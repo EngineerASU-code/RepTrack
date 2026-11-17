@@ -2,7 +2,6 @@ package app.reptrack
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
-import org.json.JSONObject
 import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
@@ -19,6 +18,7 @@ import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import org.json.JSONObject
 
 internal const val maxExchangeBytes = 8 * 1024 * 1024
 internal const val maxExchangePayloadBytes = 5 * 1024 * 1024
@@ -93,6 +93,9 @@ internal data class ExchangePreview(
     val hasLocalEdits: Boolean = false,
     val alreadyImported: Boolean = false,
     val changes: List<String> = emptyList(),
+    val senderName: String? = null,
+    val senderPublicId: String? = null,
+    val senderRole: UserRole? = null,
 )
 
 internal data class ExchangeImportResult(val importedSessions: Int = 0, val planName: String? = null, val deferred: Boolean = false)
@@ -118,26 +121,46 @@ internal object ExchangeCrypto {
 
     fun wrapPrivateKey(privateKey: java.security.PrivateKey, linkId: String): ByteArray {
         val encoded = privateKey.encoded
-        return try { wrapSecret(encoded, "pairing:$linkId") } finally { encoded.fill(0) }
+        return try {
+            wrapSecret(encoded, "pairing:$linkId")
+        } finally {
+            encoded.fill(0)
+        }
     }
 
     fun unwrapPrivateKey(wrapped: ByteArray, linkId: String): java.security.PrivateKey {
         val encoded = unwrapSecret(wrapped, "pairing:$linkId")
-        return try { java.security.KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(encoded)) }
-        finally { encoded.fill(0) }
+        return try {
+            java.security.KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(encoded))
+        } finally {
+            encoded.fill(0)
+        }
     }
 
-    fun deriveLinkKey(privateKey: java.security.PrivateKey, remotePublicKey: ByteArray, linkId: String, deviceA: String, deviceB: String): ByteArray {
+    fun deriveLinkKey(
+        privateKey: java.security.PrivateKey,
+        remotePublicKey: ByteArray,
+        linkId: String,
+        deviceA: String,
+        deviceB: String,
+    ): ByteArray {
         val peer = java.security.KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(remotePublicKey))
-        val agreement = KeyAgreement.getInstance("ECDH").apply { init(privateKey); doPhase(peer, true) }
+        val agreement = KeyAgreement.getInstance("ECDH").apply {
+            init(privateKey)
+            doPhase(peer, true)
+        }
         val shared = agreement.generateSecret()
         return try {
             val peers = listOf(deviceA, deviceB).sorted().joinToString("|")
             hkdf(shared, sha256("reptrack-link-v1|$linkId|$peers".toByteArray()), "RepTrack exchange link v1".toByteArray(), 32)
-        } finally { shared.fill(0) }
+        } finally {
+            shared.fill(0)
+        }
     }
 
-    fun fingerprint(secret: ByteArray): String = sha256(secret).take(10).joinToString("") { (it.toInt() and 0xff).toString(16).uppercase().padStart(2, '0') }
+    fun fingerprint(secret: ByteArray): String = sha256(secret).take(10).joinToString("") {
+        (it.toInt() and 0xff).toString(16).uppercase().padStart(2, '0')
+    }
         .chunked(4).joinToString(" ")
 
     fun wrapSecret(secret: ByteArray, linkId: String): ByteArray {
@@ -169,17 +192,46 @@ internal object ExchangeCrypto {
         require(json.optString("format") == "reptrack-invite" && json.optInt("version") == 1) { "Неизвестный формат приглашения" }
         val kind = json.getString("kind")
         require(kind == "request" || kind == "response") { "Неизвестный тип приглашения" }
-        val pairing = PairingFile(kind, json.getString("inviteId"), json.getString("linkId"), json.getString("deviceId"), json.getString("publicKey"), json.getLong("createdAt"), json.getLong("expiresAt"))
-        require(pairing.inviteId.length <= 128 && pairing.linkId.length <= 128 && pairing.deviceId.length <= 128) { "Некорректный идентификатор приглашения" }
-        require(pairing.publicKey.length <= 2048 && runCatching { Base64.getDecoder().decode(pairing.publicKey).size in 64..256 }.getOrDefault(false)) { "Некорректный открытый ключ" }
-        require(pairing.createdAt in 0..(now + 5 * 60_000) && pairing.expiresAt > now && pairing.expiresAt > pairing.createdAt && pairing.expiresAt - pairing.createdAt in 1..exchangeTtlMs) { "Приглашение истекло или имеет некорректный срок" }
+        val pairing =
+            PairingFile(
+                kind,
+                json.getString("inviteId"),
+                json.getString("linkId"),
+                json.getString("deviceId"),
+                json.getString("publicKey"),
+                json.getLong("createdAt"),
+                json.getLong("expiresAt"),
+            )
+        require(pairing.inviteId.length <= 128 && pairing.linkId.length <= 128 && pairing.deviceId.length <= 128) {
+            "Некорректный идентификатор приглашения"
+        }
+        require(
+            pairing.publicKey.length <= 2048 &&
+                runCatching {
+                    Base64.getDecoder().decode(pairing.publicKey).size in 64..256
+                }.getOrDefault(false),
+        ) { "Некорректный открытый ключ" }
+        require(
+            pairing.createdAt in 0..(now + 5 * 60_000) &&
+                pairing.expiresAt > now &&
+                pairing.expiresAt > pairing.createdAt &&
+                pairing.expiresAt - pairing.createdAt in 1..exchangeTtlMs,
+        ) { "Приглашение истекло или имеет некорректный срок" }
         return pairing
     }
 
     fun encrypt(header: ExchangeHeader, secret: ByteArray, payload: ByteArray): ByteArray {
         require(payload.size <= maxExchangePayloadBytes) { "Пакет слишком большой" }
         require(header.version == 1 && header.type in setOf("result", "program")) { "Некорректный пакет" }
-        require(if (header.type == "program") header.programVersion != null && header.programVersion > 0 else header.programVersion == null) { "Некорректная версия программы в пакете" }
+        require(
+            if (header.type ==
+                "program"
+            ) {
+                header.programVersion != null && header.programVersion > 0
+            } else {
+                header.programVersion == null
+            },
+        ) { "Некорректная версия программы в пакете" }
         val aad = headerJson(header).toString().toByteArray(Charsets.UTF_8)
         val nonce = ByteArray(nonceBytes).also(SecureRandom()::nextBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
@@ -219,12 +271,33 @@ internal object ExchangeCrypto {
         val header = ExchangeHeader(
             headerJson.getString("packageId"), headerJson.getString("linkId"), headerJson.getString("senderDeviceId"),
             headerJson.getString("recipientDeviceId"), headerJson.getString("type"), headerJson.getLong("createdAt"),
-            headerJson.getLong("expiresAt"), headerJson.getInt("version"), if (headerJson.isNull("programVersion")) null else headerJson.getInt("programVersion"),
+            headerJson.getLong(
+                "expiresAt",
+            ),
+            headerJson.getInt("version"), if (headerJson.isNull("programVersion")) null else headerJson.getInt("programVersion"),
         )
         require(header.version == 1 && header.type in setOf("result", "program")) { "Неподдерживаемый тип пакета" }
-        require(if (header.type == "program") header.programVersion != null && header.programVersion > 0 else header.programVersion == null) { "Некорректная версия программы в пакете" }
-        require(header.packageId.length <= 128 && header.linkId.length <= 128 && header.senderDeviceId.length <= 128 && header.recipientDeviceId.length <= 128) { "Некорректные метаданные пакета" }
-        require(header.createdAt in 0..(now + 5 * 60_000) && header.expiresAt > now && header.expiresAt > header.createdAt && header.expiresAt - header.createdAt in 1..exchangeTtlMs) { "Пакет истёк или имеет некорректный срок" }
+        require(
+            if (header.type ==
+                "program"
+            ) {
+                header.programVersion != null && header.programVersion > 0
+            } else {
+                header.programVersion == null
+            },
+        ) { "Некорректная версия программы в пакете" }
+        require(
+            header.packageId.length <= 128 &&
+                header.linkId.length <= 128 &&
+                header.senderDeviceId.length <= 128 &&
+                header.recipientDeviceId.length <= 128,
+        ) { "Некорректные метаданные пакета" }
+        require(
+            header.createdAt in 0..(now + 5 * 60_000) &&
+                header.expiresAt > now &&
+                header.expiresAt > header.createdAt &&
+                header.expiresAt - header.createdAt in 1..exchangeTtlMs,
+        ) { "Пакет истёк или имеет некорректный срок" }
         return header
     }
 
@@ -237,10 +310,14 @@ internal object ExchangeCrypto {
     @Synchronized
     private fun wrappingKey(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        if (!store.containsAlias(wrapAlias)) KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
-            init(KeyGenParameterSpec.Builder(wrapAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
-        }.generateKey()
+        if (!store.containsAlias(wrapAlias)) {
+            KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+                init(
+                    KeyGenParameterSpec.Builder(wrapAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                        .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build(),
+                )
+            }.generateKey()
+        }
         return store.getKey(wrapAlias, null) as SecretKey
     }
 

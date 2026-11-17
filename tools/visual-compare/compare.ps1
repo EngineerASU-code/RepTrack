@@ -1,6 +1,8 @@
 ﻿param(
-    [string]$OutputDirectory = "design/acceptance/visual-acceptance/visual-comparison-20261116-final-candidate",
-    [string]$CandidateDirectory = "design/acceptance/visual-acceptance/run-20261116-final-candidate/visual-acceptance"
+    [Parameter(Mandatory = $true)]
+    [string]$OutputDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$CandidateDirectory
 )
 
 $ErrorActionPreference = 'Stop'

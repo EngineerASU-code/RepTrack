@@ -1,18 +1,34 @@
 package app.reptrack
 
-import android.graphics.Bitmap
 import android.database.sqlite.SQLiteDatabase
+import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.*
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /** Repeatable APK captures, isolated from the user's selected profile and theme. */
 @RunWith(AndroidJUnit4::class)
@@ -33,8 +49,11 @@ class VisualAcceptanceTest {
             repository.setRestTimerEnabled(true)
             scenario = ActivityScenario.launch(MainActivity::class.java)
             compose.waitUntil(15_000) {
-                compose.onAllNodesWithText("Демо", substring = true).fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodesWithTag("start-workout").fetchSemanticsNodes().isNotEmpty()
             }
+            compose.onNodeWithText("Грудь · Плечи · Трицепс").assertIsDisplayed()
+            compose.onNodeWithText("Широчайшие").assertDoesNotExist()
+            compose.onNodeWithText("Квадрицепсы").assertDoesNotExist()
             val allProgressBounds = compose.onNodeWithTag("home-progress-all").fetchSemanticsNode().boundsInRoot
             val minButtonWidth = 48f * context.resources.displayMetrics.density
             org.junit.Assert.assertTrue(
@@ -85,8 +104,12 @@ class VisualAcceptanceTest {
             compose.onNodeWithTag("theme-purple_pro").performScrollTo().performClick()
             waitForSelection("theme-purple_pro")
             capture("C14-settings")
-            compose.onNodeWithText("Импортировать планы").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Таймер отдыха").performScrollTo().assertIsDisplayed()
             capture("C14-settings-bottom")
+            compose.onNodeWithTag("open-exchange").performClick()
+            compose.onNodeWithTag("profile-public-id").assertIsDisplayed()
+            compose.onNodeWithText("Снимки тренировок").performScrollTo().assertIsDisplayed()
+            capture("C15-exchange")
             compose.onNodeWithTag("nav-home").performClick()
             org.junit.Assert.assertNull("Demo profile already has an active workout; leave it intact", repository.load().activeSession)
             compose.onNodeWithTag("start-workout").performScrollTo().performClick()
@@ -114,35 +137,47 @@ class VisualAcceptanceTest {
             compose.onNodeWithText("Отдых", substring = true, useUnmergedTree = true).assertExists()
             capture("C08-rest-running")
             compose.onNodeWithContentDescription("Приостановить отдых", useUnmergedTree = true).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Продолжить отдых", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithContentDescription("Продолжить отдых", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithContentDescription("Продолжить отдых", useUnmergedTree = true).assertExists()
             capture("C08-rest-paused")
             compose.onNodeWithContentDescription("Продолжить отдых", useUnmergedTree = true).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("Приостановить отдых", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithContentDescription("Приостановить отдых", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
             compose.onNodeWithContentDescription("Пропустить отдых", useUnmergedTree = true).performClick()
-            compose.waitUntil(5_000) { compose.onAllNodesWithText("Отдых", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("Отдых", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+            }
             compose.onNodeWithText("Отдых", substring = true, useUnmergedTree = true).assertDoesNotExist()
-            // R04 uses leg press, so capture the matching exercise instead of the default bench press.
-            compose.onNodeWithContentDescription("Развернуть Жим ногами").performScrollTo().performClick()
+            // Use a catalog exercise from the revised Push fixture, which has no leg or back exercises.
+            compose.onNodeWithContentDescription("Развернуть Жим гантелей сидя").performScrollTo().performClick()
             compose.onAllNodesWithText("Открыть упражнение").onLast().performScrollTo().performClick()
             listOf("sets", "technique", "muscles").forEach { section ->
                 compose.onNodeWithTag("tab-$section").performClick()
                 if (section == "technique") {
                     compose.onNodeWithText("Техника выполнения").assertIsDisplayed()
-                    compose.onNodeWithContentDescription("Иллюстрация 1 упражнения «Жим ногами»; техника по изображению не сертифицирована").assertIsDisplayed()
+                    compose.onNodeWithContentDescription(
+                        "Фотореалистичная иллюстрация упражнения «Жим гантелей сидя»; ознакомительный материал",
+                    ).assertIsDisplayed()
                     capture("C06-technique")
-                    compose.onNodeWithText("Источник: ACE · Seated Leg Press").performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText(
+                        "Описание подготовлено для каталога RepTrack. Иллюстрация носит ознакомительный характер.",
+                    ).performScrollTo().assertIsDisplayed()
                     capture("C06-technique-bottom")
                 }
                 if (section == "muscles") {
                     compose.onNodeWithTag("muscle-map").assertExists()
                     compose.onNodeWithText("Спереди").assertIsDisplayed()
                     compose.onNodeWithText("Сзади").assertIsDisplayed()
-                    compose.onNodeWithText("Квадрицепсы").assertIsDisplayed()
-                    compose.onNodeWithText("Мышцы: Free Exercise DB · Leg Press").assertExists()
+                    compose.onNodeWithText("Дельтовидные мышцы").assertIsDisplayed()
+                    compose.onNodeWithText("Мышечная разметка каталога RepTrack · Жим гантелей сидя").assertExists()
                     compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").assertExists()
                     capture("C07-muscles")
-                    compose.onNodeWithText("Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT").performScrollTo().assertIsDisplayed()
+                    compose.onNodeWithText(
+                        "Анатомическая иллюстрация: Surya Mouly / muscle_mapper · MIT",
+                    ).performScrollTo().assertIsDisplayed()
                     capture("C07-muscles-bottom")
                 }
                 if (section == "sets") {

@@ -27,13 +27,13 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.vector.PathParser
-import org.xmlpull.v1.XmlPullParser
 import java.util.ArrayDeque
+import org.xmlpull.v1.XmlPullParser
 
 internal enum class ExerciseMuscleGroup(
     val label: String,
@@ -42,7 +42,18 @@ internal enum class ExerciseMuscleGroup(
     val backRegions: List<String> = emptyList(),
 ) {
     CHEST("Большая грудная мышца", "Грудь", frontRegions = listOf("upper-pectoralis", "mid-lower-pectoralis")),
-    SHOULDERS("Дельтовидные мышцы", "Плечи", frontRegions = listOf("anterior-deltoid", "lateral-deltoid"), backRegions = listOf("posterior-deltoid")),
+    SHOULDERS(
+        "Дельтовидные мышцы",
+        "Плечи",
+        frontRegions = listOf("anterior-deltoid", "lateral-deltoid"),
+        backRegions = listOf("posterior-deltoid"),
+    ),
+    TRAPS(
+        "Верхняя часть трапециевидной мышцы",
+        "Трапеции",
+        frontRegions = listOf("upper-trapezius"),
+        backRegions = listOf("upper-trapezius"),
+    ),
     TRICEPS("Трицепс", "Трицепс", backRegions = listOf("long-head-triceps", "lateral-head-triceps", "medial-head-triceps")),
     LATS("Широчайшие мышцы спины", "Широчайшие", backRegions = listOf("lats")),
     BICEPS("Бицепс", "Бицепс", frontRegions = listOf("long-head-bicep", "short-head-bicep")),
@@ -52,22 +63,18 @@ internal enum class ExerciseMuscleGroup(
     GLUTES("Ягодичные мышцы", "Ягодицы", backRegions = listOf("gluteus-maximus", "gluteus-medius")),
     HAMSTRINGS("Задняя поверхность бедра", "Бицепс бедра", backRegions = listOf("lateral-hamstrings", "medial-hamstrings")),
     LOWER_BACK("Поясница", "Поясница", backRegions = listOf("lowerback")),
-    FOREARMS("Предплечья", "Предплечья", frontRegions = listOf("wrist-flexors", "wrist-extensors"), backRegions = listOf("wrist-flexors", "wrist-extensors")),
+    FOREARMS(
+        "Предплечья",
+        "Предплечья",
+        frontRegions = listOf("wrist-flexors", "wrist-extensors"),
+        backRegions = listOf("wrist-flexors", "wrist-extensors"),
+    ),
+    ABS("Мышцы живота", "Пресс", frontRegions = listOf("upper-abdominals", "lower-abdominals", "obliques")),
 }
 
-private data class AnatomyShape(
-    val groupId: String,
-    val path: Path,
-    val filled: Boolean,
-    val stroked: Boolean,
-    val strokeWidth: Float,
-)
+private data class AnatomyShape(val groupId: String, val path: Path, val filled: Boolean, val stroked: Boolean, val strokeWidth: Float)
 
-private data class AnatomyDiagram(
-    val width: Float,
-    val height: Float,
-    val shapes: List<AnatomyShape>,
-)
+private data class AnatomyDiagram(val width: Float, val height: Float, val shapes: List<AnatomyShape>)
 
 @Composable
 internal fun ExerciseMuscleMap(
@@ -208,7 +215,8 @@ private fun Context.readAnatomyDiagram(assetPath: String): AnatomyDiagram {
                         }
                         val stroke = parser.getAttributeValue(null, "stroke")?.let { it != "none" } ?: true
                         val strokeWidth = parser.getAttributeValue(null, "stroke-width")?.toFloatOrNull() ?: 3.2f
-                        shapes += AnatomyShape(groups.lastOrNull().orEmpty(), path, filled = false, stroked = stroke, strokeWidth = strokeWidth)
+                        shapes +=
+                            AnatomyShape(groups.lastOrNull().orEmpty(), path, filled = false, stroked = stroke, strokeWidth = strokeWidth)
                     }
                 }
                 XmlPullParser.END_TAG -> if (parser.name == "g" && groups.isNotEmpty()) groups.removeLast()

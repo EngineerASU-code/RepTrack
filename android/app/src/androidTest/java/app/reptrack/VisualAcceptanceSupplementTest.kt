@@ -1,15 +1,24 @@
+@file:Suppress("ktlint:standard:filename")
+
 package app.reptrack
 
-import android.graphics.Bitmap
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.*
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
@@ -17,10 +26,10 @@ import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import java.io.File
 
 /** Acceptance captures use the packaged debug app with newly created synthetic trainee profiles. */
 @RunWith(AndroidJUnit4::class)
@@ -42,7 +51,7 @@ class VisualAcceptanceActivitySupplementTest {
 
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val originalFontScale = android.os.ParcelFileDescriptor.AutoCloseInputStream(
-            instrumentation.uiAutomation.executeShellCommand("settings get system font_scale")
+            instrumentation.uiAutomation.executeShellCommand("settings get system font_scale"),
         ).bufferedReader().use { it.readText().trim() }.takeIf { it.toFloatOrNull() != null } ?: "1.0"
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
@@ -53,11 +62,14 @@ class VisualAcceptanceActivitySupplementTest {
                 instrumentation.uiAutomation.executeShellCommand("settings put system font_scale $scale").close()
                 compose.waitUntil(10_000) { instrumentation.targetContext.resources.configuration.fontScale >= scale.toFloat() }
                 val suffix = scale.replace('.', '-')
-                compose.onNodeWithTag("open-profiles").performClick()
+                compose.onNodeWithTag("open-exchange").performClick()
+                compose.onNodeWithText("Профили").performScrollTo().performClick()
                 compose.onAllNodesWithText(longProfile, substring = true).onFirst().performScrollTo().assertIsDisplayed()
                 if (scale == "2.0") {
                     val screenWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
-                    val action = compose.onAllNodesWithTag("profile-open-diary").onFirst().performScrollTo().assertIsDisplayed().fetchSemanticsNode()
+                    val action = compose.onAllNodesWithTag(
+                        "profile-open-diary",
+                    ).onFirst().performScrollTo().assertIsDisplayed().fetchSemanticsNode()
                     org.junit.Assert.assertTrue(
                         "Large-font profile action is too narrow to read (${action.boundsInRoot.width} px; screen $screenWidth px)",
                         action.boundsInRoot.width >= screenWidth * 0.7f,
@@ -193,6 +205,9 @@ class VisualAcceptanceActivitySupplementTest {
             search.performClick()
             search.performTextInput("Жим ногами")
             compose.onAllNodesWithText("Жим ногами").assertCountEquals(2)
+            compose.onNodeWithTag("catalog-muscle-CHEST").assertExists()
+            compose.onNodeWithText("Оборудование").assertDoesNotExist()
+            compose.onNodeWithText("С проверенной техникой").assertDoesNotExist()
             capture("C10-catalog-search")
 
             compose.onNodeWithText("Поиск упражнения").performClick()
@@ -216,7 +231,7 @@ class VisualAcceptanceActivitySupplementTest {
             compose.onNodeWithText("Каталог упражнений").assertIsDisplayed()
             compose.onNodeWithText("Поиск упражнения").performClick()
             compose.onNodeWithText("Поиск упражнения").performTextInput("Приседания со штангой")
-            compose.onAllNodesWithText("Приседания со штангой").onLast().performClick()
+            compose.onNodeWithTag("catalog-quads-back-squat").performClick()
             compose.onNodeWithText("Добавить выбранные · 1").assertIsDisplayed()
             capture("C10-catalog-plan-select")
             compose.onNodeWithText("Детали").performClick()

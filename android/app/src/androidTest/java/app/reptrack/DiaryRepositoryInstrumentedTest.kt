@@ -2,18 +2,18 @@ package app.reptrack
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
-import org.junit.Assert.assertThrows
-import org.junit.Test
-import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
 import java.util.Base64
 import java.util.UUID
 import java.util.zip.GZIPInputStream
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class DiaryRepositoryInstrumentedTest {
@@ -24,27 +24,69 @@ class DiaryRepositoryInstrumentedTest {
         val name = "migration-${UUID.randomUUID()}.db"
         val legacy = context.openOrCreateDatabase(name, 0, null)
         legacy.setForeignKeyConstraintsEnabled(true)
-        legacy.execSQL("CREATE TABLE plans(id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL, in_cycle INTEGER NOT NULL DEFAULT 1)")
-        legacy.execSQL("CREATE TABLE plan_exercises(id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, planned_sets INTEGER NOT NULL, target_weight TEXT NOT NULL, target_reps TEXT NOT NULL, rest_seconds INTEGER NOT NULL, tracks_load INTEGER NOT NULL DEFAULT 1)")
-        legacy.execSQL("CREATE TABLE sessions(id TEXT PRIMARY KEY, plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL, plan_name TEXT NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER, comment TEXT NOT NULL DEFAULT '')")
-        legacy.execSQL("CREATE TABLE session_exercises(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, source_id TEXT, position INTEGER NOT NULL, name TEXT NOT NULL, skipped INTEGER NOT NULL DEFAULT 0, tracks_load INTEGER NOT NULL DEFAULT 1)")
-        legacy.execSQL("CREATE TABLE session_sets(id TEXT PRIMARY KEY, exercise_id TEXT NOT NULL REFERENCES session_exercises(id) ON DELETE CASCADE, position INTEGER NOT NULL, weight TEXT NOT NULL, reps TEXT NOT NULL, kind TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, rest_seconds INTEGER NOT NULL, rest_until INTEGER, rest_remaining INTEGER NOT NULL DEFAULT 0)")
+        legacy.execSQL(
+            "CREATE TABLE plans(id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL, in_cycle INTEGER NOT NULL DEFAULT 1)",
+        )
+        legacy.execSQL(
+            "CREATE TABLE plan_exercises(id TEXT PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, planned_sets INTEGER NOT NULL, target_weight TEXT NOT NULL, target_reps TEXT NOT NULL, rest_seconds INTEGER NOT NULL, tracks_load INTEGER NOT NULL DEFAULT 1)",
+        )
+        legacy.execSQL(
+            "CREATE TABLE sessions(id TEXT PRIMARY KEY, plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL, plan_name TEXT NOT NULL, status TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER, comment TEXT NOT NULL DEFAULT '')",
+        )
+        legacy.execSQL(
+            "CREATE TABLE session_exercises(id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, source_id TEXT, position INTEGER NOT NULL, name TEXT NOT NULL, skipped INTEGER NOT NULL DEFAULT 0, tracks_load INTEGER NOT NULL DEFAULT 1)",
+        )
+        legacy.execSQL(
+            "CREATE TABLE session_sets(id TEXT PRIMARY KEY, exercise_id TEXT NOT NULL REFERENCES session_exercises(id) ON DELETE CASCADE, position INTEGER NOT NULL, weight TEXT NOT NULL, reps TEXT NOT NULL, kind TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, skipped INTEGER NOT NULL DEFAULT 0, rest_seconds INTEGER NOT NULL, rest_until INTEGER, rest_remaining INTEGER NOT NULL DEFAULT 0)",
+        )
         legacy.execSQL("CREATE UNIQUE INDEX one_active_session ON sessions(status) WHERE status='ACTIVE'")
         legacy.execSQL("CREATE INDEX session_history_order ON sessions(status,ended_at DESC)")
         legacy.execSQL("INSERT INTO plans(id,name,position,in_cycle) VALUES('plan-v1','Push',0,1)")
-        legacy.execSQL("INSERT INTO sessions(id,plan_id,plan_name,status,started_at,ended_at,comment) VALUES('session-v1','plan-v1','Push','COMPLETED',100,200,'saved')")
+        legacy.execSQL(
+            "INSERT INTO sessions(id,plan_id,plan_name,status,started_at,ended_at,comment) VALUES('session-v1','plan-v1','Push','COMPLETED',100,200,'saved')",
+        )
         legacy.version = 1
         legacy.close()
 
         val helper = DiaryDb(context, name)
         try {
             val db = helper.writableDatabase
-            assertEquals(7, db.version)
-            assertEquals(1, db.rawQuery("SELECT COUNT(*) FROM plans WHERE id='plan-v1'", null).use { it.moveToFirst(); it.getInt(0) })
-            assertEquals(1, db.rawQuery("SELECT COUNT(*) FROM sessions WHERE id='session-v1'", null).use { it.moveToFirst(); it.getInt(0) })
-            assertEquals(personalProfileId, db.rawQuery("SELECT owner_id FROM sessions WHERE id='session-v1'", null).use { it.moveToFirst(); it.getString(0) })
-            assertEquals(1, db.rawQuery("SELECT plan_version FROM sessions WHERE id='session-v1'", null).use { it.moveToFirst(); it.getInt(0) })
-            assertEquals(1, db.rawQuery("SELECT COUNT(*) FROM profiles WHERE kind='PERSONAL'", null).use { it.moveToFirst(); it.getInt(0) })
+            assertEquals(8, db.version)
+            assertEquals(
+                1,
+                db.rawQuery("SELECT COUNT(*) FROM plans WHERE id='plan-v1'", null).use {
+                    it.moveToFirst()
+                    it.getInt(0)
+                },
+            )
+            assertEquals(
+                1,
+                db.rawQuery("SELECT COUNT(*) FROM sessions WHERE id='session-v1'", null).use {
+                    it.moveToFirst()
+                    it.getInt(0)
+                },
+            )
+            assertEquals(
+                personalProfileId,
+                db.rawQuery("SELECT owner_id FROM sessions WHERE id='session-v1'", null).use {
+                    it.moveToFirst()
+                    it.getString(0)
+                },
+            )
+            assertEquals(
+                1,
+                db.rawQuery("SELECT plan_version FROM sessions WHERE id='session-v1'", null).use {
+                    it.moveToFirst()
+                    it.getInt(0)
+                },
+            )
+            assertEquals(
+                1,
+                db.rawQuery("SELECT COUNT(*) FROM profiles WHERE kind='PERSONAL'", null).use {
+                    it.moveToFirst()
+                    it.getInt(0)
+                },
+            )
             assertEquals(DiarySettings(), helper.settings())
         } finally {
             helper.close()
@@ -56,17 +98,28 @@ class DiaryRepositoryInstrumentedTest {
     fun schemaV5DropsPendingKeystoreAliasesAndAddsWrappedPairingKeys() {
         val name = "migration-v5-${UUID.randomUUID()}.db"
         val legacy = context.openOrCreateDatabase(name, 0, null)
+        legacy.execSQL("CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         legacy.execSQL("CREATE TABLE profiles(id TEXT PRIMARY KEY)")
-        legacy.execSQL("CREATE TABLE pairing_pending(invite_id TEXT PRIMARY KEY,link_id TEXT NOT NULL,local_profile_id TEXT NOT NULL,role TEXT NOT NULL,remote_device_id TEXT,private_alias TEXT,wrapped_secret BLOB,fingerprint TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)")
-        legacy.execSQL("INSERT INTO pairing_pending(invite_id,link_id,local_profile_id,role,private_alias,created_at,expires_at) VALUES('old','link','local-owner','OUTGOING','reptrack.pair.dead',1,2)")
+        legacy.execSQL(
+            "CREATE TABLE pairing_pending(invite_id TEXT PRIMARY KEY,link_id TEXT NOT NULL,local_profile_id TEXT NOT NULL,role TEXT NOT NULL,remote_device_id TEXT,private_alias TEXT,wrapped_secret BLOB,fingerprint TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)",
+        )
+        legacy.execSQL(
+            "INSERT INTO pairing_pending(invite_id,link_id,local_profile_id,role,private_alias,created_at,expires_at) VALUES('old','link','local-owner','OUTGOING','reptrack.pair.dead',1,2)",
+        )
         legacy.version = 5
         legacy.close()
 
         val helper = DiaryDb(context, name)
         try {
             val db = helper.writableDatabase
-            assertEquals(7, db.version)
-            assertEquals(0, db.rawQuery("SELECT COUNT(*) FROM pairing_pending", null).use { it.moveToFirst(); it.getInt(0) })
+            assertEquals(8, db.version)
+            assertEquals(
+                0,
+                db.rawQuery("SELECT COUNT(*) FROM pairing_pending", null).use {
+                    it.moveToFirst()
+                    it.getInt(0)
+                },
+            )
             val hasWrappedKey = db.rawQuery("PRAGMA table_info(pairing_pending)", null).use { c ->
                 buildList { while (c.moveToNext()) add(c.getString(c.getColumnIndexOrThrow("name"))) }.contains("private_key_wrapped")
             }
@@ -182,7 +235,8 @@ class DiaryRepositoryInstrumentedTest {
 
     @Test
     fun versionOneBackupStillRestoresAsPersonalProfile() {
-        val json = """{"format":"reptrack-backup","version":1,"plans":[],"sessions":[],"settings":{"weightUnit":"KG","theme":"PURPLE_PRO","restTimerEnabled":true}}"""
+        val json = """{"format":"reptrack-backup","version":1,"plans":[],"sessions":[],"settings":{""" +
+            """"weightUnit":"KG","theme":"PURPLE_PRO","restTimerEnabled":true}}"""
         val archive = decodeDiaryArchive(json.toByteArray(Charsets.UTF_8))
         assertEquals(listOf(personalProfileId), archive.profiles.map { it.id })
         assertEquals(personalProfileId, archive.activeProfileId)
@@ -322,7 +376,10 @@ class DiaryRepositoryInstrumentedTest {
 
     @Test
     fun planImportRejectsNonFiniteTargetWeights() {
-        val json = """{"format":"reptrack-plans","version":1,"plans":[{"id":"p","name":"Bad","position":0,"inCycle":false,"exercises":[{"id":"e","name":"Жим","plannedSets":3,"targetWeight":"Infinity","targetReps":"8","restSeconds":90,"tracksLoad":true}]}]}"""
+        val json = """{"format":"reptrack-plans","version":1,"plans":[""" +
+            """{"id":"p","name":"Bad","position":0,"inCycle":false,"exercises":[""" +
+            """{"id":"e","name":"Жим","plannedSets":3,"targetWeight":"Infinity","targetReps":"8","restSeconds":90,"tracksLoad":true}]}""" +
+            "]}"
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
             decodePlanExport(json.toByteArray(Charsets.UTF_8))
         }
@@ -418,7 +475,11 @@ class DiaryRepositoryInstrumentedTest {
             assertEquals(1, coach.acceptExchange(resultPackage).importedSessions)
 
             val retry = trainee.createTelegramDelivery(traineeLink.id, sessionId)
-            val retryBundle = org.json.JSONObject(GZIPInputStream(ByteArrayInputStream(retry)).use { it.readBytes() }.toString(Charsets.UTF_8))
+            val retryBundle = org.json.JSONObject(
+                GZIPInputStream(ByteArrayInputStream(retry)).use {
+                    it.readBytes()
+                }.toString(Charsets.UTF_8),
+            )
             assertEquals(sessionId, retryBundle.getString("sessionId"))
             assertEquals(1, trainee.load().history.size)
             assertEquals(0, coach.acceptExchange(Base64.getDecoder().decode(retryBundle.getString("resultPackage"))).importedSessions)
@@ -520,8 +581,19 @@ class DiaryRepositoryInstrumentedTest {
             val edited = coach.load().plans.single()
             val exchangePackage = coach.createProgramPackage(linkA.id, edited.id)
             assertEquals("80", trainee.previewExchange(exchangePackage).plan!!.exercises.single().targetWeight)
-            assertThrows(RuntimeException::class.java) { coach.createProgramPackage(linkA.id, coach.load().allPlans.single { it.ownerId == profileB }.id) }
-        } finally { coach.close(); trainee.close() }
+            assertThrows(RuntimeException::class.java) {
+                coach.createProgramPackage(
+                    linkA.id,
+                    coach.load().allPlans.single {
+                        it.ownerId ==
+                            profileB
+                    }.id,
+                )
+            }
+        } finally {
+            coach.close()
+            trainee.close()
+        }
     }
 
     @Test
@@ -547,7 +619,11 @@ class DiaryRepositoryInstrumentedTest {
     fun encryptedExchangeRejectsAuthenticatedHeaderTampering() {
         val secret = ByteArray(32) { it.toByte() }
         val now = System.currentTimeMillis()
-        val file = ExchangeCrypto.encrypt(ExchangeHeader("package", "link", "sender", "recipient", "result", now, now + exchangeTtlMs), secret, byteArrayOf(1, 2, 3))
+        val file = ExchangeCrypto.encrypt(
+            ExchangeHeader("package", "link", "sender", "recipient", "result", now, now + exchangeTtlMs),
+            secret,
+            byteArrayOf(1, 2, 3),
+        )
         val root = org.json.JSONObject(file.toString(Charsets.UTF_8))
         val aad = org.json.JSONObject(String(java.util.Base64.getDecoder().decode(root.getString("aad")), Charsets.UTF_8))
         aad.put("recipientDeviceId", "other-device")
