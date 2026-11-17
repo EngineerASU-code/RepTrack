@@ -12,7 +12,7 @@
 
 - Для Android нужны JDK 17/21, Android SDK API 36 и Build Tools 36.0.0. Из `android/` запускай `.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug`, `.\gradlew.bat :app:lintDebug` (Android Gradle Plugin) или с подключённым эмулятором/устройством `.\gradlew.bat :app:connectedDebugAndroidTest`.
 - Для Telegram из `telegram-bot/` доступны `node --check src/index.mjs` и `node --test test/index.test.mjs`; используются встроенные возможности Node.js 24+.
-- Отдельный форматтер и дополнительные линтеры не настроены; `git diff --check` проверяет пробелы в diff. CI workflow в репозитории отсутствует.
+- Для Android Kotlin настроен KtLint, для JavaScript/web — Prettier. `.github/workflows/ci.yml` запускает Node-проверки, Prettier, KtLint для затронутых Kotlin-файлов, Android lint, unit tests и debug-сборку на pull request и push в `main`; `git diff --check` проверяет пробелы в diff.
 - Не запускай служебные скрипты из `tools/` или `tasks/` как тесты: они могут менять настройки, запускать процессы или обращаться к внешним API.
 
 ## Данные и рабочее дерево

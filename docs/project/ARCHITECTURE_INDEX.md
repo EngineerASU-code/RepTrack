@@ -3,7 +3,7 @@
 ## Scope and freshness
 
 - Repository: `EngineerASU-code/RepTrack`; default branch and checkout branch: `main`.
-- Graphify Cloud: `READY`, queryable; indexed commit and local `HEAD` both equal `648404812444da2eaa87e7608f94eff1856396bd`.
+- Graphify Cloud snapshot: `READY`, queryable; indexed commit is `648404812444da2eaa87e7608f94eff1856396bd`. This is the pre-task baseline; check Graphify's returned `commitSha` before relying on the graph for the newer checkout.
 - Snapshot: 2026-11-17, indexed at `2026-11-17T07:05:33Z`. Graph summary: 683 nodes, 2,342 edges, 22 communities.
 - Code-context capability is available; pattern queries are unavailable. This map reflects the indexed commit, not untracked workspace files. The checkout has local-only materials outside that snapshot.
 
