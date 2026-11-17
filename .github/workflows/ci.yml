@@ -61,11 +61,14 @@ jobs:
         working-directory: android
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            changed="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- 'android/**/*.kt')"
+            changed="$(git -C .. diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- 'android/**/*.kt')"
           elif [[ -z "$BASE_SHA" || "$BASE_SHA" == 0000000000000000000000000000000000000000 ]]; then
-            changed="$(git ls-files 'android/**/*.kt')"
+            changed="$(git -C .. ls-files 'android/**/*.kt')"
+          elif ! git -C .. cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "Base commit is unavailable locally after a history rewrite; skipping changed-file KtLint selection for this push."
+            exit 0
           else
-            changed="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- 'android/**/*.kt')"
+            changed="$(git -C .. diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" -- 'android/**/*.kt')"
           fi
           files="$(printf '%s\n' "$changed" | sed '/^$/d' | paste -sd, -)"
           if [[ -n "$files" ]]; then
